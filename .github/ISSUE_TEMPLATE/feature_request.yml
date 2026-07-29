@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest an idea or improvement
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        WebObsidian is design-driven — see [PRD.md](../blob/main/PRD.md). Substantial
+        features usually start as a PRD change. Describe the need and we'll figure out the fit.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do that's hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like to happen? Reference Obsidian behavior if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: input
+    id: prd
+    attributes:
+      label: Related PRD section (if any)
+      placeholder: e.g. FR-2 Editor & rendering
