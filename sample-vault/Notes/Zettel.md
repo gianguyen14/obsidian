@@ -1,0 +1,3 @@
+# Zettel
+
+links [[Welcome]] #zettelkasten
