@@ -6,7 +6,8 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 COPY server/package.json ./server/
 COPY web/package.json ./web/
-RUN npm install
+COPY desktop/package.json ./desktop/
+RUN npm ci
 COPY . .
 RUN npm run build
 
@@ -21,7 +22,9 @@ RUN apk add --no-cache git git-lfs && git lfs install --system
 # Install production deps for the server workspace only
 COPY package.json package-lock.json* ./
 COPY server/package.json ./server/
-RUN npm install --omit=dev --workspace server
+COPY web/package.json ./web/
+COPY desktop/package.json ./desktop/
+RUN npm ci --omit=dev --workspace server
 
 # Copy built artifacts
 COPY --from=build /app/server/dist ./server/dist
@@ -33,6 +36,9 @@ ENV PORT=8787 \
     VAULT_PATH=/vault \
     ALLOWED_ROOTS=/vault \
     NODE_OPTIONS=--max-old-space-size=4096
+
+RUN mkdir -p /data /vault && chown -R node:node /app /data /vault
+USER node
 
 VOLUME ["/vault", "/data"]
 EXPOSE 8787

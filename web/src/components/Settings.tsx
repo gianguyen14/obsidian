@@ -413,13 +413,12 @@ function AccountSettings({ s, reload }: { s: any; reload: () => void }) {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  const usingDefault = !s?.auth?.hasCustomPassword;
 
   const save = async () => {
     setErr('');
     setMsg('');
-    if (next.length < 6) {
-      setErr('Mật khẩu mới phải có ít nhất 6 ký tự');
+    if (next.length < 12) {
+      setErr('Mật khẩu mới phải có ít nhất 12 ký tự');
       return;
     }
     if (next !== confirm) {
@@ -446,18 +445,12 @@ function AccountSettings({ s, reload }: { s: any; reload: () => void }) {
       <h2>Account</h2>
       <p style={{ color: 'var(--text-muted)' }}>
         Mật khẩu đăng nhập vào WebObsidian.
-        {usingDefault && (
-          <>
-            {' '}Bạn đang dùng <b>mật khẩu mặc định <code>123456</code></b> — hãy đổi mật khẩu để
-            bảo mật vault.
-          </>
-        )}
       </p>
-      <Row name="Mật khẩu hiện tại" desc={usingDefault ? 'Mặc định là 123456' : undefined}>
+      <Row name="Mật khẩu hiện tại">
         <input className="text-input" type="password" style={{ width: 240 }} value={current}
           onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" />
       </Row>
-      <Row name="Mật khẩu mới" desc="Tối thiểu 6 ký tự">
+      <Row name="Mật khẩu mới" desc="Tối thiểu 12 ký tự">
         <input className="text-input" type="password" style={{ width: 240 }} value={next}
           onChange={(e) => setNext(e.target.value)} autoComplete="new-password" />
       </Row>

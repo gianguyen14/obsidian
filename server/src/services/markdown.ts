@@ -1,4 +1,4 @@
-import matter from 'gray-matter';
+import { parseDocument } from 'yaml';
 import path from 'node:path';
 
 export interface ParsedNote {
@@ -20,9 +20,16 @@ export function parseNote(rel: string, raw: string): ParsedNote {
   let frontmatter: Record<string, unknown> = {};
   let body = raw;
   try {
-    const fm = matter(raw);
-    frontmatter = (fm.data ?? {}) as Record<string, unknown>;
-    body = fm.content;
+    const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(raw);
+    if (match) {
+      const doc = parseDocument(match[1], { uniqueKeys: true });
+      if (doc.errors.length) throw doc.errors[0];
+      const parsed = doc.toJS({ maxAliasCount: 50 });
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        frontmatter = parsed as Record<string, unknown>;
+      }
+      body = raw.slice(match[0].length);
+    }
   } catch {
     /* malformed frontmatter — index raw */
   }

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from './lib/api';
 import { useStore } from './lib/store';
 import Login from './components/Login';
-import ForceChangePassword from './components/ForceChangePassword';
 import Ribbon from './components/Ribbon';
 import Sidebar from './components/Sidebar';
 import RightSidebar from './components/RightSidebar';
@@ -21,7 +20,6 @@ import { useIsMobile } from './lib/useIsMobile';
 export default function App() {
   const authed = useStore((s) => s.authed);
   const setAuthed = useStore((s) => s.setAuthed);
-  const mustChangePassword = useStore((s) => s.mustChangePassword);
   const setMustChangePassword = useStore((s) => s.setMustChangePassword);
   const loadTree = useStore((s) => s.loadTree);
   const leftOpen = useStore((s) => s.leftOpen);
@@ -154,9 +152,6 @@ export default function App() {
 
   if (checking) return <div className={theme} style={{ height: '100%' }} />;
   if (!authed) return <div className={theme}><Login onAuthed={() => setAuthed(true)} /></div>;
-  // Signed in but still on the default password → block the app until it's changed.
-  if (mustChangePassword) return <div className={theme}><ForceChangePassword /></div>;
-
   // On mobile the sidebars are overlay drawers (always mounted, slid in/out by
   // CSS), driven by the device-local `mobileDrawer` state — not the persisted
   // leftOpen/rightOpen that sync across desktops.

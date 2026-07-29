@@ -94,7 +94,7 @@ async function startServer(cfg: DesktopConfig): Promise<void> {
     VAULT_PATH: cfg.vaultPath,
     // Let the in-app folder browser roam the user's home (single-user desktop).
     ALLOWED_ROOTS: os.homedir(),
-    // Per-install recovery/override password → enables seamless auto-login.
+    // Per-install bootstrap password → enables seamless auto-login.
     WEBOBSIDIAN_PASSWORD: cfg.secret,
     // Cookies must not be Secure over plain http://127.0.0.1.
     COOKIE_SECURE: 'false',
@@ -185,30 +185,15 @@ function tokenFromSetCookie(setCookie: string[]): string | undefined {
   return undefined;
 }
 
-// Log in with the per-install secret (always accepted as the override password),
+// Log in with the per-install secret (stored as the initial owner password),
 // then seed the JWT into the window's session cookie jar so the BrowserWindow is
-// authenticated with no login prompt. If still on the default password, promote
-// the secret to the custom password (via Bearer auth) so the UI doesn't force a
-// password change on first launch. JWTs survive the password change (signed with
-// a stable jwtSecret), so the same token stays valid for the window.
+// authenticated with no login prompt.
 async function autoLogin(port: number, secret: string): Promise<void> {
   try {
     const login = await apiRequest('POST', `${baseUrl(port)}/auth/login`, { password: secret });
     if (login.status !== 200) return;
     const token = tokenFromSetCookie(login.setCookie);
     if (!token) return;
-
-    const mustChange = Boolean(
-      login.json && typeof login.json === 'object' && (login.json as { mustChangePassword?: boolean }).mustChangePassword,
-    );
-    if (mustChange) {
-      await apiRequest(
-        'POST',
-        `${baseUrl(port)}/auth/change-password`,
-        { currentPassword: secret, newPassword: secret },
-        { Authorization: `Bearer ${token}` },
-      );
-    }
 
     await session.defaultSession.cookies.set({
       url: baseUrl(port),
@@ -289,14 +274,36 @@ function createWindow(): void {
 
   // Open external links (http/https not on our origin) in the system browser.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith(baseUrl(serverPort))) return { action: 'allow' };
-    shell.openExternal(url);
+    if (isInternalUrl(url)) return { action: 'allow' };
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
     return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isInternalUrl(url)) return;
+    event.preventDefault();
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
   });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+}
+
+function isInternalUrl(value: string): boolean {
+  try {
+    return new URL(value).origin === new URL(baseUrl(serverPort)).origin;
+  } catch {
+    return false;
+  }
+}
+
+function isSafeExternalUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password;
+  } catch {
+    return false;
+  }
 }
 
 async function switchVault(): Promise<void> {

@@ -10,6 +10,9 @@ export interface RuntimeConfig {
   /** Roots the folder browser is allowed to traverse. */
   allowedRoots: string[];
   initialPassword?: string;
+  publicBaseUrl?: string;
+  uploadMaxBytes: number;
+  uploadMaxConcurrent: number;
   isProd: boolean;
   /**
    * Express `trust proxy` setting. Controls whether `X-Forwarded-*` headers are
@@ -61,9 +64,28 @@ export const config: RuntimeConfig = {
   defaultVaultPath: path.resolve(process.env.VAULT_PATH ?? './sample-vault'),
   allowedRoots: resolveRoots(),
   initialPassword: process.env.WEBOBSIDIAN_PASSWORD || undefined,
+  publicBaseUrl: validPublicBaseUrl(process.env.PUBLIC_BASE_URL),
+  uploadMaxBytes: positiveInt(process.env.UPLOAD_MAX_BYTES, 64 * 1024 * 1024),
+  uploadMaxConcurrent: positiveInt(process.env.UPLOAD_MAX_CONCURRENT, 4),
   isProd: process.env.NODE_ENV === 'production',
   trustProxy: resolveTrustProxy(),
 };
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function validPublicBaseUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return undefined;
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return undefined;
+  }
+}
 
 export const SETTINGS_FILE = path.join(config.dataDir, 'settings.json');
 export const INDEX_FILE = path.join(config.dataDir, 'qmd-index.json');

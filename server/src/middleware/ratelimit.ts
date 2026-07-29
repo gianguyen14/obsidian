@@ -39,3 +39,26 @@ export function loginRateLimit(req: Request, res: Response, next: NextFunction):
   }
   next();
 }
+
+const shareAttempts = new Map<string, number[]>();
+
+/** Bound expensive public scrypt checks by both share id and TCP peer. */
+export function shareUnlockRateLimit(req: Request, res: Response, next: NextFunction): void {
+  const key = `${req.params.id}:${clientIp(req)}`;
+  const now = Date.now();
+  const recent = (shareAttempts.get(key) ?? []).filter((t) => t > now - WINDOW_MS);
+  if (recent.length >= MAX_ATTEMPTS) {
+    const retryAfter = Math.ceil((recent[0] + WINDOW_MS - now) / 1000);
+    res.setHeader('Retry-After', String(retryAfter));
+    res.status(429).json({ error: 'Too many unlock attempts. Try again later.', retryAfter });
+    return;
+  }
+  recent.push(now);
+  shareAttempts.set(key, recent);
+  if (shareAttempts.size > 10_000) {
+    for (const [k, v] of shareAttempts) {
+      if (v.every((t) => t <= now - WINDOW_MS)) shareAttempts.delete(k);
+    }
+  }
+  next();
+}

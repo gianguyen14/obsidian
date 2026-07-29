@@ -65,7 +65,10 @@ export default function Login({ onAuthed }: { onAuthed: () => void }) {
             onChange={(e) => setConfirm(e.target.value)}
           />
         )}
-        <button className="btn" type="submit" disabled={busy}>
+        {needSetup && password.length > 0 && password.length < 12 && (
+          <div className="err">Password must be at least 12 characters</div>
+        )}
+        <button className="btn" type="submit" disabled={busy || (needSetup && password.length < 12)}>
           {needSetup ? 'Create & Unlock' : 'Unlock'}
         </button>
       </form>

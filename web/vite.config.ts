@@ -10,25 +10,14 @@ export default defineConfig({
     chunkSizeWarningLimit: 900,
     rollupOptions: {
       output: {
-        manualChunks: {
-          codemirror: [
-            '@codemirror/state',
-            '@codemirror/view',
-            '@codemirror/commands',
-            '@codemirror/language',
-            '@codemirror/lang-markdown',
-            '@codemirror/theme-one-dark',
-          ],
-          markdown: [
-            'unified',
-            'remark-parse',
-            'remark-gfm',
-            'remark-rehype',
-            'rehype-raw',
-            'rehype-sanitize',
-            'rehype-stringify',
-          ],
-          react: ['react', 'react-dom'],
+        manualChunks(id) {
+          const moduleId = id.replaceAll('\\', '/');
+          if (moduleId.includes('/node_modules/@codemirror/')) return 'codemirror';
+          if (
+            /\/node_modules\/(unified|remark-[^/]+|rehype-[^/]+)\//.test(moduleId)
+          ) return 'markdown';
+          if (/\/node_modules\/(react|react-dom)\//.test(moduleId)) return 'react';
+          return undefined;
         },
       },
     },

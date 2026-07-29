@@ -7,9 +7,7 @@ import { config } from '../config.js';
 const scryptAsync = promisify(scrypt);
 const KEYLEN = 64;
 
-/** Mật khẩu mặc định khi cài đặt — dùng được ngay, không cần bước setup. */
-export const DEFAULT_PASSWORD = '123456';
-export const MIN_PASSWORD_LEN = 6;
+export const MIN_PASSWORD_LEN = 12;
 
 /** So sánh chuỗi an toàn về timing (cho override pass dạng plaintext). */
 function safeEqualStr(a: string, b: string): boolean {
@@ -34,36 +32,49 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return derived.length === expected.length && timingSafeEqual(derived, expected);
 }
 
-/**
- * Luôn true: hệ thống luôn có mật khẩu đăng nhập hiệu dụng (tối thiểu là mặc
- * định 123456). Giữ lại cho `/auth/status` và endpoint setup legacy.
- */
 export async function isPasswordSet(): Promise<boolean> {
-  return true;
-}
-
-/** Đã đổi pass khỏi mặc định chưa? */
-export async function hasCustomPassword(): Promise<boolean> {
   const s = await getSettings();
-  return Boolean(s.auth.userPasswordHash);
+  return Boolean(s.auth.userPasswordHash || s.auth.passwordHash || config.initialPassword);
 }
 
-/** Lưu mật khẩu người dùng mới (ghi đè pass mặc định/pass cũ). */
-export async function setUserPassword(password: string): Promise<void> {
+async function storeUserPassword(password: string, requireUnset: boolean): Promise<void> {
   if (password.length < MIN_PASSWORD_LEN) {
     throw new Error(`Password must be at least ${MIN_PASSWORD_LEN} characters`);
   }
   const hash = await hashPassword(password);
   await updateSettings((d) => {
+    if (requireUnset && (d.auth.userPasswordHash || d.auth.passwordHash)) {
+      throw Object.assign(new Error('Password already set'), { status: 409 });
+    }
     d.auth.userPasswordHash = hash;
+    d.auth.sessionVersion += 1;
   });
+}
+
+let setupInProgress = false;
+
+/** Store the first password exactly once, including across concurrent requests. */
+export async function setupPassword(password: string): Promise<void> {
+  if (setupInProgress || (await isPasswordSet())) {
+    throw Object.assign(new Error('Password already set'), { status: 409 });
+  }
+  setupInProgress = true;
+  try {
+    await storeUserPassword(password, true);
+  } finally {
+    setupInProgress = false;
+  }
+}
+
+export async function setUserPassword(password: string): Promise<void> {
+  await storeUserPassword(password, false);
 }
 
 /**
  * Kiểm tra mật khẩu đăng nhập. Chấp nhận:
- *  1) Mật khẩu người dùng (userPasswordHash), hoặc mặc định 123456 nếu chưa đổi.
- *  2) Mật khẩu override để khôi phục: auth.passwordHash (hash, sửa tay) hoặc
- *     env WEBOBSIDIAN_PASSWORD (plaintext) — luôn được chấp nhận.
+ *  1) Mật khẩu người dùng (userPasswordHash).
+ *  2) Mật khẩu recovery auth.passwordHash (hash, sửa tay). The environment
+ *     bootstrap password is accepted only until a persisted password exists.
  */
 export async function checkPassword(password: string): Promise<boolean> {
   const s = await getSettings();
@@ -71,13 +82,13 @@ export async function checkPassword(password: string): Promise<boolean> {
   // (1) Mật khẩu đăng nhập hiệu dụng.
   if (s.auth.userPasswordHash) {
     if (await verifyPassword(password, s.auth.userPasswordHash)) return true;
-  } else if (safeEqualStr(password, DEFAULT_PASSWORD)) {
-    return true;
   }
 
   // (2) Mật khẩu override (recovery) — luôn kiểm tra, kể cả khi đã đổi pass.
   if (s.auth.passwordHash && (await verifyPassword(password, s.auth.passwordHash))) return true;
-  if (config.initialPassword && safeEqualStr(password, config.initialPassword)) return true;
+  if (!s.auth.userPasswordHash && config.initialPassword && safeEqualStr(password, config.initialPassword)) {
+    return true;
+  }
 
   return false;
 }
@@ -92,7 +103,7 @@ const TOKEN_TTL = '30d';
 
 export async function issueToken(): Promise<string> {
   const s = await getSettings();
-  return jwt.sign({ sub: 'owner' }, s.auth.jwtSecret, {
+  return jwt.sign({ sub: 'owner', sv: s.auth.sessionVersion }, s.auth.jwtSecret, {
     expiresIn: TOKEN_TTL,
     algorithm: 'HS256',
   });
@@ -108,7 +119,12 @@ export async function verifyToken(token: string): Promise<boolean> {
   try {
     const s = await getSettings();
     const payload = jwt.verify(token, s.auth.jwtSecret, { algorithms: ['HS256'] });
-    return typeof payload === 'object' && payload !== null && payload.sub === 'owner';
+    return (
+      typeof payload === 'object' &&
+      payload !== null &&
+      payload.sub === 'owner' &&
+      payload.sv === s.auth.sessionVersion
+    );
   } catch {
     return false;
   }

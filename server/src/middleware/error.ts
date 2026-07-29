@@ -12,7 +12,9 @@ export function asyncHandler<T>(
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function errorHandler(err: any, _req: Request, res: Response, _next: NextFunction): void {
-  const status = err?.status ?? 500;
+  const status = err?.name === 'MulterError'
+    ? err?.code === 'LIMIT_FILE_SIZE' ? 413 : 400
+    : err?.status ?? 500;
   // Redact any URL-embedded credentials (e.g. a Git PAT baked into an
   // authenticated remote URL) before this message hits the client OR the logs.
   const message = redactUrlCreds(err?.message ?? 'Internal Server Error');

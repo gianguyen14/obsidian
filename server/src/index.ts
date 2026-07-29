@@ -14,7 +14,7 @@ import { config } from './config.js';
 import { loadSettings, getSettings, setPasswordIfInitial } from './bootstrap.js';
 import { errorHandler } from './middleware/error.js';
 import { COOKIE_NAME } from './middleware/auth.js';
-import { verifyToken } from './services/auth.js';
+import { isPasswordSet, verifyToken } from './services/auth.js';
 import { authRouter } from './routes/auth.js';
 import { filesRouter } from './routes/files.js';
 import { searchRouter } from './routes/search.js';
@@ -32,21 +32,30 @@ import { buildFileIndex, indexFile, unindexFile } from './services/fileindex.js'
 import { setBroadcaster, broadcast } from './services/realtime.js';
 import { getVaultRoot, ensureVault, invalidateStat } from './services/vault.js';
 import { startAutoSync } from './services/autosync.js';
+import { assertVaultPathAllowed } from './services/pathpolicy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Keep the local server alive on stray async errors (e.g. a deferred library task
-// throwing) instead of crashing the whole process — log loudly so bugs aren't hidden.
 process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err);
+  process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason);
+  process.exit(1);
 });
 
 async function main() {
   await loadSettings();
+  const settings = await getSettings();
+  await assertVaultPathAllowed(settings.vault.path, settings.vault.path);
   await setPasswordIfInitial();
+  if (config.isProd && !isLoopbackHost(config.host) && !(await isPasswordSet())) {
+    throw new Error(
+      'Refusing to expose an unconfigured production instance. Set WEBOBSIDIAN_PASSWORD ' +
+      'or bind HOST to 127.0.0.1 and complete first-run setup locally.',
+    );
+  }
   await ensureVault();
 
   const app = express();
@@ -147,6 +156,10 @@ async function main() {
     console.log(`  Vault: ${config.defaultVaultPath}`);
     console.log(`  Data:  ${config.dataDir}\n`);
   });
+}
+
+function isLoopbackHost(host: string): boolean {
+  return ['127.0.0.1', '::1', 'localhost'].includes(host.toLowerCase());
 }
 
 // --- WebSocket: broadcast filesystem & UI-state events to connected clients ----

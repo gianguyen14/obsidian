@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { getSettings } from './settings.js';
 
 export interface TreeNode {
@@ -164,6 +165,23 @@ export async function writeFileBuffer(rel: string, buf: Buffer): Promise<void> {
   await fs.writeFile(abs, buf);
 }
 
+/** Atomically import a disk-backed upload without buffering it in the Node heap. */
+export async function writeFileFromPath(rel: string, source: string): Promise<void> {
+  const abs = await resolveInVault(rel);
+  await fs.mkdir(path.dirname(abs), { recursive: true });
+  const tmp = `${abs}.tmp-${randomBytes(8).toString('hex')}`;
+  try {
+    await fs.copyFile(source, tmp);
+    await fs.rename(tmp, abs);
+  } finally {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+  }
+}
+
+export async function removeTemporaryFile(source: string): Promise<void> {
+  await fs.rm(source, { force: true }).catch(() => {});
+}
+
 export async function createFolder(rel: string): Promise<void> {
   const abs = await resolveInVault(rel);
   await fs.mkdir(abs, { recursive: true });
@@ -252,8 +270,9 @@ export async function trash(rel: string): Promise<string> {
   const s = await getSettings();
   const root = await getVaultRoot();
   const absFrom = await resolveInVault(rel);
-  const trashRoot = path.join(root, s.vault.trash);
-  const dest = path.join(trashRoot, rel);
+  const trashRoot = await resolveInVault(s.vault.trash);
+  const sourceRel = toRel(root, absFrom);
+  const dest = await resolveInVault(path.posix.join(s.vault.trash.replaceAll('\\', '/'), sourceRel));
   await fs.mkdir(path.dirname(dest), { recursive: true });
   // avoid collision
   let finalDest = dest;
@@ -287,8 +306,7 @@ export interface TrashItem {
 
 async function getTrashRoot(): Promise<string> {
   const s = await getSettings();
-  const root = await getVaultRoot();
-  return path.join(root, s.vault.trash);
+  return resolveInVault(s.vault.trash);
 }
 
 /** Confirm `abs` lives inside the trash folder; return its trash-relative path. */

@@ -17,15 +17,15 @@
     "dist:publish": "node scripts/build.mjs && electron-builder --publish always"
   },
   "devDependencies": {
-    "electron": "33.4.11",
-    "electron-builder": "^25.1.8",
-    "esbuild": "^0.24.0"
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.1"
   },
   "build": {
     "appId": "com.xnohat.webobsidian",
     "productName": "WebObsidian",
     "copyright": "Copyright © 2026 xnohat",
-    "electronVersion": "33.4.11",
+    "electronVersion": "43.2.0",
     "directories": {
       "output": "release",
       "buildResources": "buildResources"
@@ -40,13 +40,27 @@
       }
     ],
     "asar": true,
-    "electronLanguages": ["en-US"],
+    "electronLanguages": [
+      "en-US"
+    ],
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "buildResources/icon.png",
       "target": [
-        { "target": "dmg", "arch": ["arm64", "x64"] },
-        { "target": "zip", "arch": ["arm64", "x64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
       "darkModeSupport": true,
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
@@ -57,8 +71,20 @@
     "win": {
       "icon": "buildResources/icon.png",
       "target": [
-        { "target": "nsis", "arch": ["x64", "arm64", "ia32"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64",
+            "ia32"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "artifactName": "${productName}-${version}-win-${arch}.${ext}"
     },
@@ -74,8 +100,20 @@
       "maintainer": "xnohat <xnohat@gmail.com>",
       "synopsis": "Self-hosted Obsidian-compatible notes app",
       "target": [
-        { "target": "AppImage", "arch": ["x64", "arm64"] },
-        { "target": "deb", "arch": ["x64", "arm64"] }
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
     },

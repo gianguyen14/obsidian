@@ -14,6 +14,8 @@ import {
 import { canvasEmbedTargets } from '../services/rendercanvas.js';
 import { mimeFor } from '../services/mime.js';
 import { sendFileWithRange } from '../services/httpfile.js';
+import { shareUnlockRateLimit } from '../middleware/ratelimit.js';
+import { cookieIsSecure } from '../services/cookies.js';
 
 const isMd = (p: string) => /\.(md|markdown)$/i.test(p);
 const isCanvas = (p: string) => /\.canvas$/i.test(p);
@@ -149,6 +151,7 @@ export async function isUnlocked(req: Request, share: ShareRecord): Promise<bool
 // public endpoints (httpOnly so embedded <img> requests send it automatically).
 publicSharesRouter.post(
   '/:id/unlock',
+  shareUnlockRateLimit,
   asyncHandler(async (req, res) => {
     const share = await getActiveShare(req.params.id);
     if (!share || !share.passwordHash) {
@@ -170,6 +173,7 @@ publicSharesRouter.post(
     res.cookie(unlockCookie(share.id), token, {
       httpOnly: true,
       sameSite: 'lax',
+      secure: cookieIsSecure(req),
       path: '/',
       maxAge: 12 * 60 * 60 * 1000,
     });
