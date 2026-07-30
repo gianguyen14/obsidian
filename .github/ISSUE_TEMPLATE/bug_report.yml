@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a problem with WebObsidian
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! For **security issues**, please follow
+        [SECURITY.md](../blob/main/SECURITY.md) instead of opening a public issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+      placeholder: When I ..., I expected ..., but instead ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. See error
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running it?
+      options:
+        - Docker (docker compose)
+        - Local dev (npm run dev)
+        - Production build (npm start)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: e.g. v0.1.0 or commit f845bd1
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, browser, Node version, vault size (approx. note count) if relevant.
+      placeholder: macOS 15 · Chrome 138 · Node 20 · ~4k notes
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / console output
+      description: Relevant server logs or browser console errors. Redact any secrets.
+      render: shell
