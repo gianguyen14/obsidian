@@ -16,6 +16,20 @@ const ApiKeySchema = z.object({
   lastUsed: z.string().nullable().default(null),
 });
 
+const PasskeySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  publicKey: z.string(),
+  counter: z.number().int().nonnegative(),
+  transports: z
+    .array(z.enum(['ble', 'cable', 'hybrid', 'internal', 'nfc', 'smart-card', 'usb']))
+    .default([]),
+  deviceType: z.enum(['singleDevice', 'multiDevice']),
+  backedUp: z.boolean(),
+  createdAt: z.string(),
+  lastUsedAt: z.string().nullable().default(null),
+});
+
 const SettingsSchema = z.object({
   version: z.number().default(1),
   auth: z
@@ -26,6 +40,15 @@ const SettingsSchema = z.object({
       passwordHash: z.string().default(''),
       jwtSecret: z.string().default(''),
       sessionVersion: z.number().int().nonnegative().default(0),
+      totp: z
+        .object({
+          enabled: z.boolean().default(false),
+          secretEncrypted: z.string().default(''),
+          recoveryCodeHashes: z.array(z.string()).default([]),
+          lastUsedTimeStep: z.number().int().nonnegative().nullable().default(null),
+        })
+        .default({}),
+      passkeys: z.array(PasskeySchema).default([]),
     })
     .default({}),
   vault: z
@@ -87,6 +110,7 @@ const SettingsSchema = z.object({
 
 export type Settings = z.infer<typeof SettingsSchema>;
 export type ApiKeyRecord = z.infer<typeof ApiKeySchema>;
+export type PasskeyRecord = z.infer<typeof PasskeySchema>;
 
 /** ---- Store --------------------------------------------------------------- */
 
@@ -184,6 +208,9 @@ export function redactSettings(s: Settings) {
     auth: {
       hasCustomPassword: Boolean(s.auth.userPasswordHash),
       hasOverridePassword: Boolean(s.auth.passwordHash),
+      totpEnabled: s.auth.totp.enabled,
+      recoveryCodesRemaining: s.auth.totp.recoveryCodeHashes.length,
+      passkeyCount: s.auth.passkeys.length,
     },
     git: { ...s.git, token: s.git.token ? '••••••••' : '' },
     api: {

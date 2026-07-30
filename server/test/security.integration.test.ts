@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { after, test } from 'node:test';
+import { generate } from 'otplib';
 
 const tempRoots: string[] = [];
 const children: ChildProcess[] = [];
@@ -268,4 +269,192 @@ test('corrupt settings fail closed without being overwritten', async () => {
   const [code] = await once(child, 'exit') as [number | null, NodeJS.Signals | null];
   assert.notEqual(code, 0);
   assert.equal(await fs.readFile(settingsFile, 'utf8'), corrupt);
+});
+
+test('TOTP enrollment, recovery login, replay protection and Passkey options', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webobsidian-mfa-'));
+  tempRoots.push(root);
+  const dataDir = path.join(root, 'data');
+  const vaultDir = path.join(root, 'vault');
+  await Promise.all([fs.mkdir(dataDir), fs.mkdir(vaultDir)]);
+  const port = await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  const child = startServer({
+    HOST: '127.0.0.1',
+    PORT: String(port),
+    DATA_DIR: dataDir,
+    VAULT_PATH: vaultDir,
+    ALLOWED_ROOTS: vaultDir,
+    WEBOBSIDIAN_PASSWORD: '',
+    NODE_ENV: 'production',
+  });
+  await waitForHealth(base, child);
+
+  const password = 'a strong MFA test password';
+  const setupPasswordResponse = await jsonRequest(base, '/auth/setup', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+  assert.equal(setupPasswordResponse.status, 200);
+  const initialCookie = responseCookie(setupPasswordResponse);
+
+  const wrongPassword = await jsonRequest(base, '/auth/totp/setup/start', {
+    method: 'POST',
+    headers: { Cookie: initialCookie },
+    body: JSON.stringify({ currentPassword: 'incorrect password' }),
+  });
+  assert.equal(wrongPassword.status, 401);
+
+  const totpStart = await jsonRequest(base, '/auth/totp/setup/start', {
+    method: 'POST',
+    headers: { Cookie: initialCookie },
+    body: JSON.stringify({ currentPassword: password }),
+  });
+  assert.equal(totpStart.status, 200);
+  const totpSetup = await totpStart.json() as {
+    setupId: string;
+    secret: string;
+    uri: string;
+  };
+  assert.match(totpSetup.uri, /^otpauth:\/\/totp\//);
+
+  const firstCode = await generate({ secret: totpSetup.secret });
+  const totpVerify = await jsonRequest(base, '/auth/totp/setup/verify', {
+    method: 'POST',
+    headers: { Cookie: initialCookie },
+    body: JSON.stringify({ setupId: totpSetup.setupId, code: firstCode }),
+  });
+  assert.equal(totpVerify.status, 200);
+  const enabledCookie = responseCookie(totpVerify);
+  const enabledResult = await totpVerify.json() as { recoveryCodes: string[] };
+  assert.equal(enabledResult.recoveryCodes.length, 10);
+  assert.equal(new Set(enabledResult.recoveryCodes).size, 10);
+  assert.equal((await jsonRequest(base, '/auth/me', {
+    headers: { Cookie: initialCookie },
+  })).status, 401);
+
+  const persistedRaw = await fs.readFile(path.join(dataDir, 'settings.json'), 'utf8');
+  assert.equal(persistedRaw.includes(totpSetup.secret), false);
+  assert.equal(persistedRaw.includes(enabledResult.recoveryCodes[0]), false);
+
+  const passwordLogin = await jsonRequest(base, '/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+  assert.equal(passwordLogin.status, 200);
+  assert.equal(passwordLogin.headers.get('set-cookie'), null);
+  const passwordStep = await passwordLogin.json() as {
+    requiresTwoFactor: boolean;
+    twoFactorToken: string;
+  };
+  assert.equal(passwordStep.requiresTwoFactor, true);
+
+  // The TOTP used during enrollment is protected against replay in the same
+  // 30-second time step.
+  assert.equal((await jsonRequest(base, '/auth/login/totp', {
+    method: 'POST',
+    body: JSON.stringify({
+      twoFactorToken: passwordStep.twoFactorToken,
+      code: firstCode,
+    }),
+  })).status, 401);
+
+  const recoveryLogin = await jsonRequest(base, '/auth/login/totp', {
+    method: 'POST',
+    body: JSON.stringify({
+      twoFactorToken: passwordStep.twoFactorToken,
+      code: enabledResult.recoveryCodes[0],
+    }),
+  });
+  assert.equal(recoveryLogin.status, 200);
+  const recoveryCookie = responseCookie(recoveryLogin);
+  const recoveryResult = await recoveryLogin.json() as {
+    method: string;
+    recoveryCodesRemaining: number;
+  };
+  assert.equal(recoveryResult.method, 'recovery');
+  assert.equal(recoveryResult.recoveryCodesRemaining, 9);
+  assert.equal((await jsonRequest(base, '/auth/me', {
+    headers: { Cookie: enabledCookie },
+  })).status, 401);
+  assert.equal((await jsonRequest(base, '/auth/me', {
+    headers: { Cookie: recoveryCookie },
+  })).status, 200);
+
+  const passkeyOverInsecureOrigin = await jsonRequest(base, '/auth/passkeys/register/options', {
+    method: 'POST',
+    headers: { Cookie: recoveryCookie, Origin: 'http://notes.example.com' },
+    body: JSON.stringify({ currentPassword: password, name: 'Test key' }),
+  });
+  assert.equal(passkeyOverInsecureOrigin.status, 400);
+
+  const passkeyOptions = await jsonRequest(base, '/auth/passkeys/register/options', {
+    method: 'POST',
+    headers: { Cookie: recoveryCookie, Origin: 'https://notes.example.com' },
+    body: JSON.stringify({ currentPassword: password, name: 'Test key' }),
+  });
+  assert.equal(passkeyOptions.status, 200);
+  const passkeyBody = await passkeyOptions.json() as {
+    ceremonyId: string;
+    options: { rp: { id: string }; authenticatorSelection?: { residentKey?: string } };
+  };
+  assert.equal(passkeyBody.options.rp.id, 'notes.example.com');
+  assert.equal(passkeyBody.options.authenticatorSelection?.residentKey, 'required');
+  const malformedPasskey = {
+    id: 'not-a-real-credential',
+    rawId: 'not-a-real-credential',
+    type: 'public-key',
+    clientExtensionResults: {},
+    response: { clientDataJSON: '', attestationObject: '' },
+  };
+  assert.equal((await jsonRequest(base, '/auth/passkeys/register/verify', {
+    method: 'POST',
+    headers: { Cookie: recoveryCookie },
+    body: JSON.stringify({
+      ceremonyId: passkeyBody.ceremonyId,
+      response: malformedPasskey,
+    }),
+  })).status, 400);
+  // Registration ceremonies are one-time even when verification fails.
+  assert.equal((await jsonRequest(base, '/auth/passkeys/register/verify', {
+    method: 'POST',
+    headers: { Cookie: recoveryCookie },
+    body: JSON.stringify({
+      ceremonyId: passkeyBody.ceremonyId,
+      response: malformedPasskey,
+    }),
+  })).status, 400);
+
+  // A recovery code is single-use, including across fresh password steps.
+  const secondPasswordStep = await jsonRequest(base, '/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+  const secondToken = (await secondPasswordStep.json() as { twoFactorToken: string }).twoFactorToken;
+  assert.equal((await jsonRequest(base, '/auth/login/totp', {
+    method: 'POST',
+    body: JSON.stringify({
+      twoFactorToken: secondToken,
+      code: enabledResult.recoveryCodes[0],
+    }),
+  })).status, 401);
+
+  const disabled = await jsonRequest(base, '/auth/totp/disable', {
+    method: 'POST',
+    headers: { Cookie: recoveryCookie },
+    body: JSON.stringify({
+      currentPassword: password,
+      code: enabledResult.recoveryCodes[1],
+    }),
+  });
+  assert.equal(disabled.status, 200);
+  const disabledCookie = responseCookie(disabled);
+  const directLogin = await jsonRequest(base, '/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+  assert.equal((await directLogin.json() as { requiresTwoFactor: boolean }).requiresTwoFactor, false);
+  assert.equal((await jsonRequest(base, '/auth/me', {
+    headers: { Cookie: disabledCookie },
+  })).status, 200);
 });

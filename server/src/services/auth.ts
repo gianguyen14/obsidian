@@ -100,6 +100,8 @@ export async function changePassword(current: string, next: string): Promise<voi
 }
 
 const TOKEN_TTL = '30d';
+const TWO_FACTOR_TOKEN_TTL_SECONDS = 5 * 60;
+const pendingTwoFactorLogins = new Map<string, number>();
 
 export async function issueToken(): Promise<string> {
   const s = await getSettings();
@@ -107,6 +109,51 @@ export async function issueToken(): Promise<string> {
     expiresIn: TOKEN_TTL,
     algorithm: 'HS256',
   });
+}
+
+/** Issue a short-lived token that proves the password step succeeded, but is
+ * deliberately rejected by normal session middleware until TOTP is completed. */
+export async function issueTwoFactorToken(): Promise<string> {
+  const s = await getSettings();
+  const nonce = randomBytes(24).toString('base64url');
+  pendingTwoFactorLogins.set(nonce, Date.now() + TWO_FACTOR_TOKEN_TTL_SECONDS * 1000);
+  cleanupPendingTwoFactorLogins();
+  return jwt.sign(
+    { sub: 'owner-2fa', sv: s.auth.sessionVersion, nonce },
+    s.auth.jwtSecret,
+    { expiresIn: TWO_FACTOR_TOKEN_TTL_SECONDS, algorithm: 'HS256' },
+  );
+}
+
+export async function verifyTwoFactorToken(token: string): Promise<string | null> {
+  try {
+    const s = await getSettings();
+    const payload = jwt.verify(token, s.auth.jwtSecret, { algorithms: ['HS256'] });
+    if (
+      typeof payload !== 'object' ||
+      payload === null ||
+      payload.sub !== 'owner-2fa' ||
+      payload.sv !== s.auth.sessionVersion ||
+      typeof payload.nonce !== 'string'
+    ) {
+      return null;
+    }
+    const expiresAt = pendingTwoFactorLogins.get(payload.nonce);
+    return expiresAt && expiresAt > Date.now() ? payload.nonce : null;
+  } catch {
+    return null;
+  }
+}
+
+export function consumeTwoFactorToken(nonce: string): void {
+  pendingTwoFactorLogins.delete(nonce);
+}
+
+function cleanupPendingTwoFactorLogins(): void {
+  const now = Date.now();
+  for (const [nonce, expiresAt] of pendingTwoFactorLogins) {
+    if (expiresAt <= now) pendingTwoFactorLogins.delete(nonce);
+  }
 }
 
 /**

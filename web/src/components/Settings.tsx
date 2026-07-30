@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { startRegistration } from '@simplewebauthn/browser';
+import QRCode from 'qrcode';
 import { useStore } from '../lib/store';
-import { api } from '../lib/api';
+import { api, type SecurityStatus } from '../lib/api';
 import Icon from './Icon';
 
 type Section = 'vault' | 'git' | 'api' | 'sharing' | 'plugins' | 'appearance' | 'account' | 'about';
@@ -406,13 +408,33 @@ function Appearance({ s }: { s: any }) {
   );
 }
 
-function AccountSettings({ s, reload }: { s: any; reload: () => void }) {
+function AccountSettings({ s: _s, reload }: { s: any; reload: () => void }) {
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [security, setSecurity] = useState<SecurityStatus | null>(null);
+  const [securityPassword, setSecurityPassword] = useState('');
+  const [factorCode, setFactorCode] = useState('');
+  const [passkeyName, setPasskeyName] = useState('');
+  const [totpSetup, setTotpSetup] = useState<{
+    setupId: string;
+    secret: string;
+    uri: string;
+    qr: string;
+  } | null>(null);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
+  const [securityBusy, setSecurityBusy] = useState('');
+  const [securityErr, setSecurityErr] = useState('');
+  const [securityMsg, setSecurityMsg] = useState('');
+
+  const loadSecurity = async () => setSecurity(await api.securityStatus());
+
+  useEffect(() => {
+    loadSecurity().catch(() => {});
+  }, []);
 
   const save = async () => {
     setErr('');
@@ -438,6 +460,88 @@ function AccountSettings({ s, reload }: { s: any; reload: () => void }) {
     } finally {
       setBusy(false);
     }
+  };
+
+  const securityAction = async (name: string, action: () => Promise<void>) => {
+    setSecurityErr('');
+    setSecurityMsg('');
+    setSecurityBusy(name);
+    try {
+      await action();
+      await loadSecurity();
+    } catch (e: any) {
+      setSecurityErr(e?.message ?? 'Security update failed');
+    } finally {
+      setSecurityBusy('');
+    }
+  };
+
+  const startTotp = () => securityAction('totp-start', async () => {
+    const setup = await api.startTotpSetup(securityPassword);
+    const qr = await QRCode.toDataURL(setup.uri, { width: 220, margin: 1 });
+    setTotpSetup({ ...setup, qr });
+    setFactorCode('');
+    setRecoveryCodes([]);
+  });
+
+  const verifyTotp = () => securityAction('totp-verify', async () => {
+    if (!totpSetup) return;
+    const result = await api.verifyTotpSetup(totpSetup.setupId, factorCode);
+    setRecoveryCodes(result.recoveryCodes);
+    setTotpSetup(null);
+    setFactorCode('');
+    setSecurityMsg('Authenticator 2FA enabled. Save the recovery codes now.');
+  });
+
+  const turnOffTotp = () => securityAction('totp-disable', async () => {
+    if (!window.confirm('Disable authenticator 2FA?')) return;
+    await api.disableTotp(securityPassword, factorCode);
+    setFactorCode('');
+    setRecoveryCodes([]);
+    setSecurityMsg('Authenticator 2FA disabled.');
+  });
+
+  const newRecoveryCodes = () => securityAction('recovery', async () => {
+    const result = await api.regenerateRecoveryCodes(securityPassword, factorCode);
+    setRecoveryCodes(result.recoveryCodes);
+    setFactorCode('');
+    setSecurityMsg('New recovery codes generated. Older codes no longer work.');
+  });
+
+  const addPasskey = () => securityAction('passkey-add', async () => {
+    if (!window.isSecureContext || typeof window.PublicKeyCredential === 'undefined') {
+      throw new Error('Passkeys require HTTPS or localhost in a supported browser');
+    }
+    const { ceremonyId, options } = await api.passkeyRegistrationOptions(
+      securityPassword,
+      passkeyName || 'My Passkey',
+    );
+    const response = await startRegistration({ optionsJSON: options });
+    await api.passkeyRegistrationVerify(ceremonyId, response);
+    setPasskeyName('');
+    setSecurityMsg('Passkey added.');
+  });
+
+  const removePasskey = (id: string, name: string) => securityAction(`passkey-${id}`, async () => {
+    if (!window.confirm(`Remove Passkey “${name}”?`)) return;
+    await api.deletePasskey(id, securityPassword);
+    setSecurityMsg('Passkey removed. Other active sessions were revoked.');
+  });
+
+  const copyRecoveryCodes = async () => {
+    await navigator.clipboard.writeText(recoveryCodes.join('\n'));
+    setSecurityMsg('Recovery codes copied.');
+  };
+
+  const downloadRecoveryCodes = () => {
+    const blob = new Blob([
+      `WebObsidian recovery codes\nGenerated: ${new Date().toISOString()}\n\n${recoveryCodes.join('\n')}\n`,
+    ], { type: 'text/plain' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'webobsidian-recovery-codes.txt';
+    link.click();
+    URL.revokeObjectURL(link.href);
   };
 
   return (
@@ -466,8 +570,176 @@ function AccountSettings({ s, reload }: { s: any; reload: () => void }) {
       <p style={{ color: 'var(--text-faint)', fontSize: 12, marginTop: 16 }}>
         Quên mật khẩu? Đặt <code>auth.passwordHash</code> trong <code>data/settings.json</code> hoặc
         biến môi trường <code>WEBOBSIDIAN_PASSWORD</code> làm mật khẩu khôi phục (override) rồi đăng
-        nhập lại để đổi mật khẩu mới.
+        nhập lại để đổi mật khẩu mới. Nếu đã bật 2FA, dùng một mã khôi phục; trong trường hợp mất cả
+        thiết bị lẫn mã khôi phục, dừng server và đặt <code>auth.totp.enabled</code> thành
+        <code>false</code> trong file cấu hình trước khi khởi động lại.
       </p>
+
+      <div className="settings-divider" />
+      <h2>Two-factor authentication & Passkeys</h2>
+      <p style={{ color: 'var(--text-muted)' }}>
+        Use an authenticator app as a second step after your password, or sign in passwordlessly
+        with a Passkey protected by your device.
+      </p>
+      <Row
+        name="Confirm current password"
+        desc="Required before adding or removing a sign-in method"
+      >
+        <input
+          className="text-input"
+          type="password"
+          style={{ width: 240 }}
+          value={securityPassword}
+          onChange={(e) => setSecurityPassword(e.target.value)}
+          autoComplete="current-password"
+        />
+      </Row>
+
+      <div className="security-card">
+        <div className="security-card-head">
+          <div>
+            <strong>Authenticator app (TOTP)</strong>
+            <div className="security-note">
+              {security?.totpEnabled
+                ? `Enabled · ${security.recoveryCodesRemaining} recovery codes remaining`
+                : 'Not enabled'}
+            </div>
+          </div>
+          {!security?.totpEnabled && !totpSetup && (
+            <button
+              className="btn"
+              onClick={startTotp}
+              disabled={Boolean(securityBusy) || !securityPassword}
+            >
+              {securityBusy === 'totp-start' ? 'Starting…' : 'Set up'}
+            </button>
+          )}
+        </div>
+
+        {totpSetup && (
+          <div className="totp-setup">
+            <p>Scan this QR code with Google Authenticator, Microsoft Authenticator, 1Password, or another TOTP app.</p>
+            <img src={totpSetup.qr} alt="Authenticator setup QR code" width={220} height={220} />
+            <div className="security-note">Manual key</div>
+            <code className="totp-secret">{totpSetup.secret}</code>
+            <input
+              className="text-input"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="Enter the 6-digit code"
+              value={factorCode}
+              onChange={(e) => setFactorCode(e.target.value)}
+            />
+            <div className="security-actions">
+              <button
+                className="btn"
+                onClick={verifyTotp}
+                disabled={securityBusy === 'totp-verify' || !factorCode.trim()}
+              >
+                {securityBusy === 'totp-verify' ? 'Verifying…' : 'Verify & enable'}
+              </button>
+              <button className="btn secondary" onClick={() => setTotpSetup(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
+
+        {security?.totpEnabled && (
+          <div className="security-control-block">
+            <input
+              className="text-input"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="Authenticator or recovery code"
+              value={factorCode}
+              onChange={(e) => setFactorCode(e.target.value)}
+            />
+            <div className="security-actions">
+              <button
+                className="btn secondary"
+                onClick={newRecoveryCodes}
+                disabled={Boolean(securityBusy) || !securityPassword || !factorCode.trim()}
+              >
+                Generate new recovery codes
+              </button>
+              <button
+                className="btn danger"
+                onClick={turnOffTotp}
+                disabled={Boolean(securityBusy) || !securityPassword || !factorCode.trim()}
+              >
+                Disable 2FA
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {recoveryCodes.length > 0 && (
+        <div className="recovery-codes">
+          <strong>Save these recovery codes now</strong>
+          <p>Each code works once. They will not be shown again.</p>
+          <pre>{recoveryCodes.join('\n')}</pre>
+          <div className="security-actions">
+            <button className="btn secondary" onClick={copyRecoveryCodes}>Copy</button>
+            <button className="btn secondary" onClick={downloadRecoveryCodes}>Download</button>
+          </div>
+        </div>
+      )}
+
+      <div className="security-card">
+        <div className="security-card-head">
+          <div>
+            <strong>Passkeys</strong>
+            <div className="security-note">
+              {security?.passkeys.length
+                ? `${security.passkeys.length} registered`
+                : 'No Passkeys registered'}
+            </div>
+          </div>
+        </div>
+        <div className="passkey-add">
+          <input
+            className="text-input"
+            placeholder="Name, e.g. MacBook or iPhone"
+            maxLength={64}
+            value={passkeyName}
+            onChange={(e) => setPasskeyName(e.target.value)}
+          />
+          <button
+            className="btn"
+            onClick={addPasskey}
+            disabled={Boolean(securityBusy) || !securityPassword || !passkeyName.trim()}
+          >
+            {securityBusy === 'passkey-add' ? 'Waiting for device…' : 'Add Passkey'}
+          </button>
+        </div>
+        {security?.passkeys.map((passkey) => (
+          <div className="passkey-row" key={passkey.id}>
+            <div>
+              <strong>{passkey.name}</strong>
+              <div className="security-note">
+                Added {new Date(passkey.createdAt).toLocaleDateString()}
+                {passkey.lastUsedAt
+                  ? ` · Last used ${new Date(passkey.lastUsedAt).toLocaleString()}`
+                  : ' · Never used'}
+                {passkey.backedUp ? ' · Synced' : ''}
+              </div>
+            </div>
+            <button
+              className="btn danger"
+              onClick={() => removePasskey(passkey.id, passkey.name)}
+              disabled={Boolean(securityBusy) || !securityPassword}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <p className="security-note">
+          Passkeys require HTTPS on your domain. HTTP works only on localhost.
+        </p>
+      </div>
+
+      {securityErr && <div className="security-error">{securityErr}</div>}
+      {securityMsg && <div className="security-success">{securityMsg}</div>}
     </div>
   );
 }

@@ -944,7 +944,37 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 .login-card p { color: var(--text-muted); margin: 4px 0 20px; font-size: 13px; }
 .login-card input { margin-bottom: 12px; padding: 9px 12px; }
 .login-card .btn { width: 100%; padding: 10px; }
+.login-card .btn svg { vertical-align: -3px; margin-right: 6px; }
 .login-card .err { color: #d6453d; font-size: 12px; min-height: 16px; margin-bottom: 8px; }
+.login-divider { display: flex; align-items: center; gap: 10px; color: var(--text-faint); font-size: 12px; margin: 14px 0; }
+.login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: var(--bg-modifier-border); }
+.login-link { border: 0; background: transparent; color: var(--text-muted); cursor: pointer; margin-top: 12px; font-size: 12px; }
+.login-link:hover { color: var(--text-normal); text-decoration: underline; }
+
+/* Account security */
+.settings-divider { height: 1px; background: var(--bg-modifier-border); margin: 28px 0; }
+.security-card { border: 1px solid var(--bg-modifier-border); border-radius: var(--radius);
+  padding: 16px; margin: 14px 0; background: var(--bg-secondary); }
+.security-card-head, .passkey-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.security-note { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+.security-control-block { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--bg-modifier-border); }
+.security-control-block > .text-input { width: min(100%, 340px); margin-bottom: 10px; }
+.security-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.totp-setup { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--bg-modifier-border); }
+.totp-setup img { display: block; border-radius: 8px; background: #fff; margin: 12px 0; }
+.totp-setup > .text-input { display: block; width: min(100%, 300px); margin: 12px 0; }
+.totp-secret { display: inline-block; overflow-wrap: anywhere; user-select: all; padding: 7px 9px;
+  border-radius: 4px; background: var(--bg-primary); margin-top: 5px; }
+.recovery-codes { border: 1px solid var(--color-yellow, #d7a72b); border-radius: var(--radius);
+  background: var(--bg-secondary); padding: 16px; margin: 14px 0; }
+.recovery-codes p { color: var(--text-muted); font-size: 12px; }
+.recovery-codes pre { columns: 2; user-select: all; background: var(--bg-primary); border-radius: 6px;
+  padding: 12px; line-height: 1.8; overflow-x: auto; }
+.passkey-add { display: flex; gap: 8px; margin: 14px 0; }
+.passkey-add .text-input { flex: 1; min-width: 0; }
+.passkey-row { border-top: 1px solid var(--bg-modifier-border); padding: 12px 0; }
+.security-error { color: #e5534b; margin: 8px 0; }
+.security-success { color: var(--text-accent, #4caf50); margin: 8px 0; }
 
 .empty-state { flex: 1; display: grid; place-items: center; color: var(--text-faint); text-align: center; }
 .empty-state .big { display: flex; justify-content: center; color: var(--base-40); margin-bottom: 12px; }

@@ -56,6 +56,21 @@ export interface GitCommit {
   author: string;
 }
 
+export interface PasskeySummary {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  backedUp: boolean;
+  deviceType: 'singleDevice' | 'multiDevice';
+}
+
+export interface SecurityStatus {
+  totpEnabled: boolean;
+  recoveryCodesRemaining: number;
+  passkeys: PasskeySummary[];
+}
+
 async function req<T>(url: string, opts: RequestInit = {}): Promise<T> {
   const { headers: optHeaders, ...rest } = opts;
   const res = await fetch(url, {
@@ -65,9 +80,6 @@ async function req<T>(url: string, opts: RequestInit = {}): Promise<T> {
     // would drop Content-Type whenever a caller passes its own headers.
     headers: { 'Content-Type': 'application/json', ...(optHeaders ?? {}) },
   });
-  if (res.status === 401) {
-    throw new ApiError('Unauthorized', 401);
-  }
   if (!res.ok) {
     let msg = res.statusText;
     try {
@@ -89,13 +101,34 @@ export class ApiError extends Error {
 
 export const api = {
   // auth
-  authStatus: () => req<{ passwordSet: boolean; mustChangePassword: boolean }>('/auth/status'),
+  authStatus: () =>
+    req<{
+      passwordSet: boolean;
+      mustChangePassword: boolean;
+      totpEnabled: boolean;
+      passkeyEnabled: boolean;
+    }>('/auth/status'),
   setup: (password: string) =>
     req<{ ok: true }>('/auth/setup', { method: 'POST', body: JSON.stringify({ password }) }),
   login: (password: string) =>
-    req<{ ok: true; mustChangePassword: boolean }>('/auth/login', {
+    req<
+      | { ok: true; requiresTwoFactor: false; mustChangePassword: boolean }
+      | { ok: false; requiresTwoFactor: true; twoFactorToken: string }
+    >('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ password }),
+    }),
+  loginTotp: (twoFactorToken: string, code: string) =>
+    req<{ ok: true; method: 'totp' | 'recovery'; recoveryCodesRemaining: number }>(
+      '/auth/login/totp',
+      { method: 'POST', body: JSON.stringify({ twoFactorToken, code }) },
+    ),
+  passkeyLoginOptions: () =>
+    req<{ ceremonyId: string; options: any }>('/auth/passkeys/login/options', { method: 'POST' }),
+  passkeyLoginVerify: (ceremonyId: string, response: unknown) =>
+    req<{ ok: true }>('/auth/passkeys/login/verify', {
+      method: 'POST',
+      body: JSON.stringify({ ceremonyId, response }),
     }),
   logout: () => req<{ ok: true }>('/auth/logout', { method: 'POST' }),
   changePassword: (currentPassword: string, newPassword: string) =>
@@ -104,6 +137,42 @@ export const api = {
       body: JSON.stringify({ currentPassword, newPassword }),
     }),
   me: () => req<{ authenticated: boolean; mustChangePassword: boolean }>('/auth/me'),
+  securityStatus: () => req<SecurityStatus>('/auth/security'),
+  startTotpSetup: (currentPassword: string) =>
+    req<{ setupId: string; secret: string; uri: string }>('/auth/totp/setup/start', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword }),
+    }),
+  verifyTotpSetup: (setupId: string, code: string) =>
+    req<{ ok: true; recoveryCodes: string[] }>('/auth/totp/setup/verify', {
+      method: 'POST',
+      body: JSON.stringify({ setupId, code }),
+    }),
+  disableTotp: (currentPassword: string, code: string) =>
+    req<{ ok: true }>('/auth/totp/disable', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, code }),
+    }),
+  regenerateRecoveryCodes: (currentPassword: string, code: string) =>
+    req<{ ok: true; recoveryCodes: string[] }>('/auth/totp/recovery-codes', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, code }),
+    }),
+  passkeyRegistrationOptions: (currentPassword: string, name: string) =>
+    req<{ ceremonyId: string; options: any }>('/auth/passkeys/register/options', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, name }),
+    }),
+  passkeyRegistrationVerify: (ceremonyId: string, response: unknown) =>
+    req<{ ok: true }>('/auth/passkeys/register/verify', {
+      method: 'POST',
+      body: JSON.stringify({ ceremonyId, response }),
+    }),
+  deletePasskey: (id: string, currentPassword: string) =>
+    req<{ ok: true }>(`/auth/passkeys/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ currentPassword }),
+    }),
 
   // files
   tree: () => req<TreeNode>('/api/files/'),

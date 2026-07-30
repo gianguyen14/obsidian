@@ -11,6 +11,10 @@ export interface RuntimeConfig {
   allowedRoots: string[];
   initialPassword?: string;
   publicBaseUrl?: string;
+  /** Optional canonical WebAuthn origin, e.g. https://notes.example.com. */
+  passkeyOrigin?: string;
+  /** Optional WebAuthn relying-party domain, e.g. notes.example.com. */
+  passkeyRpId?: string;
   uploadMaxBytes: number;
   uploadMaxConcurrent: number;
   isProd: boolean;
@@ -65,6 +69,10 @@ export const config: RuntimeConfig = {
   allowedRoots: resolveRoots(),
   initialPassword: process.env.WEBOBSIDIAN_PASSWORD || undefined,
   publicBaseUrl: validPublicBaseUrl(process.env.PUBLIC_BASE_URL),
+  passkeyOrigin:
+    validPasskeyOrigin(process.env.PASSKEY_ORIGIN) ??
+    validPasskeyOrigin(process.env.PUBLIC_BASE_URL),
+  passkeyRpId: validRpId(process.env.PASSKEY_RP_ID),
   uploadMaxBytes: positiveInt(process.env.UPLOAD_MAX_BYTES, 64 * 1024 * 1024),
   uploadMaxConcurrent: positiveInt(process.env.UPLOAD_MAX_CONCURRENT, 4),
   isProd: process.env.NODE_ENV === 'production',
@@ -85,6 +93,19 @@ function validPublicBaseUrl(raw: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function validPasskeyOrigin(raw: string | undefined): string | undefined {
+  const value = validPublicBaseUrl(raw);
+  return value ? new URL(value).origin : undefined;
+}
+
+function validRpId(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const value = raw.trim().toLowerCase();
+  return /^[a-z0-9.-]+$/.test(value) && !value.startsWith('.') && !value.endsWith('.')
+    ? value
+    : undefined;
 }
 
 export const SETTINGS_FILE = path.join(config.dataDir, 'settings.json');

@@ -53,8 +53,9 @@ stack runs from a single `docker compose up`.
   prefix matching, incremental indexing, persisted to disk for fast startup.
 - 🔄 **GitHub sync** — native `git` pull / commit / push with **Git LFS** for large
   attachments, optional auto-sync, and per-file **version history** (browse & restore).
-- 🔐 **Login gate** — a single master password (scrypt-hashed) protects everything; JWT in
-  an httpOnly cookie.
+- 🔐 **Secure sign-in** — a scrypt-hashed master password, optional authenticator-app
+  2FA with one-time recovery codes, and passwordless Passkeys/WebAuthn; sessions use an
+  httpOnly cookie and are revoked after sensitive account changes.
 - 🌐 **Public sharing** — turn any note into a read-only, server-rendered (SEO-friendly)
   public page at `/share/<token>`, optionally password-protected.
 - 🤖 **Agent API** — scoped API keys (`read` / `write` / `search`) let AI agents work with
@@ -100,10 +101,9 @@ The desktop app bundles the whole server, picks your vault folder on first launc
 Open on macOS). Build it yourself with `npm run desktop:dist`; see
 [`desktop/README.md`](desktop/README.md) for details.
 
-> 🔑 **Default password is `123456`.** Log in right away, then change it in
-> **Settings → Account**. To seed a different password on first run, set
-> `WEBOBSIDIAN_PASSWORD` in `.env`. Forgot it? Set `WEBOBSIDIAN_PASSWORD` (plaintext) or
-> `auth.passwordHash` (scrypt) as a recovery override.
+> 🔑 Docker requires a strong `WEBOBSIDIAN_PASSWORD` in `.env`. A bare-metal instance
+> bound only to localhost can instead complete the one-time password setup in the browser.
+> After login, enable authenticator 2FA and register Passkeys in **Settings → Account**.
 
 ### Point it at your own vault
 
@@ -122,6 +122,17 @@ Then `docker compose up -d --build`. Your vault can be a plain folder or a `git 
 
 Set `HTTP_BIND=127.0.0.1` so the app is only reachable from the host, then terminate TLS
 with nginx / Caddy / Traefik in front of `http://127.0.0.1:8787`.
+
+Passkeys require HTTPS (except on localhost). Set the canonical origin in `.env`, then
+rebuild the container:
+
+```bash
+PUBLIC_BASE_URL=https://notes.example.com
+PASSKEY_ORIGIN=https://notes.example.com
+PASSKEY_RP_ID=notes.example.com
+```
+
+Changing `PASSKEY_RP_ID` later makes Passkeys registered for the previous domain unusable.
 
 ### Large vaults & file watching
 
@@ -176,9 +187,11 @@ Useful scripts:
 | Var | Default | Description |
 |-----|---------|-------------|
 | `VAULT_HOST_PATH` | `./sample-vault` | Host path bind-mounted to `/vault` |
-| `HTTP_BIND` | `0.0.0.0` | Host interface to publish on (`127.0.0.1` = local only) |
+| `HTTP_BIND` | `127.0.0.1` | Host interface to publish on (`127.0.0.1` = local only) |
 | `HTTP_PORT` | `8787` | Host port mapped to container `8787` |
 | `WEBOBSIDIAN_PASSWORD` | – | Seed/override the master password |
+| `PASSKEY_ORIGIN` | – | Canonical HTTPS origin used to register and verify Passkeys |
+| `PASSKEY_RP_ID` | origin hostname | WebAuthn relying-party domain |
 | `WEBOBSIDIAN_WATCH` | `auto` | `auto` (native + polling fallback) or `polling` |
 
 ### App-level env (read by the server; Docker sets these inside the container)
@@ -190,6 +203,8 @@ Useful scripts:
 | `DATA_DIR` | `./data` | Where `settings.json` + search index live |
 | `ALLOWED_ROOTS` | – | Comma-separated roots the vault picker may browse |
 | `WEBOBSIDIAN_PASSWORD` | – | Seed/override the master password |
+| `PASSKEY_ORIGIN` | request origin | Canonical HTTPS WebAuthn origin |
+| `PASSKEY_RP_ID` | origin hostname | WebAuthn relying-party domain |
 | `WEBOBSIDIAN_WATCH` | `auto` | File-watch mode: `auto` or `polling` |
 | `NODE_OPTIONS` | `--max-old-space-size=4096` | Node heap size — raise for large vaults |
 
