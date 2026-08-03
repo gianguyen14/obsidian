@@ -25,8 +25,8 @@ pluginsRouter.post(
 pluginsRouter.patch(
   '/:id/enabled',
   asyncHandler(async (req, res) => {
-    await plugins.setEnabled(req.params.id, Boolean(req.body?.enabled));
-    res.json({ ok: true });
+    const result = await plugins.setEnabled(req.params.id, Boolean(req.body?.enabled));
+    res.json({ ok: true, ...result });
   }),
 );
 
@@ -45,8 +45,8 @@ pluginsRouter.put(
   }),
 );
 
-// CSP-safe CommonJS-to-ESM wrapper. This stays same-origin, so production does
-// not need to weaken script-src with unsafe-eval or blob:.
+// CSP-safe CommonJS-to-ESM wrapper. The loader stays same-origin and never uses
+// eval itself; individual trusted plugin bundles may request dynamic-code CSP.
 pluginsRouter.get(
   '/:id/module.js',
   asyncHandler(async (req, res) => {

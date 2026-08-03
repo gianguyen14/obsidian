@@ -97,6 +97,10 @@ test('security-sensitive setup, session and vault boundaries', async () => {
   });
   await waitForHealth(base, child);
 
+  const strictCsp = (await jsonRequest(base, '/auth/status')).headers.get('content-security-policy') ?? '';
+  assert.doesNotMatch(strictCsp, /'unsafe-eval'/);
+  assert.doesNotMatch(strictCsp, /'wasm-unsafe-eval'/);
+
   const status = await jsonRequest(base, '/auth/status');
   assert.equal(status.status, 200);
   assert.equal((await status.json() as { passwordSet: boolean }).passwordSet, false);
@@ -255,9 +259,14 @@ test('security-sensitive setup, session and vault boundaries', async () => {
   const installedPlugins = await jsonRequest(base, '/api/plugins/', { headers: { Cookie: oldCookie } });
   assert.equal(installedPlugins.status, 200);
   assert.equal((await installedPlugins.json() as { plugins: { id: string }[] }).plugins[0]?.id, 'runtime-smoke');
-  assert.equal((await jsonRequest(base, '/api/plugins/runtime-smoke/enabled', {
+  const enabledPlugin = await jsonRequest(base, '/api/plugins/runtime-smoke/enabled', {
     method: 'PATCH', headers: { Cookie: oldCookie }, body: JSON.stringify({ enabled: true }),
-  })).status, 200);
+  });
+  assert.equal(enabledPlugin.status, 200);
+  assert.deepEqual(await enabledPlugin.json(), { ok: true, reloadRequired: true });
+  const pluginCsp = (await jsonRequest(base, '/auth/status')).headers.get('content-security-policy') ?? '';
+  assert.match(pluginCsp, /'unsafe-eval'/);
+  assert.match(pluginCsp, /'wasm-unsafe-eval'/);
 
   const pluginModule = await jsonRequest(base, '/api/plugins/runtime-smoke/module.js', { headers: { Cookie: oldCookie } });
   assert.equal(pluginModule.status, 200);
@@ -298,6 +307,10 @@ test('security-sensitive setup, session and vault boundaries', async () => {
     body: JSON.stringify({ path: 'shared.md' }),
   });
   const shareId = (await shareResponse.json() as { share: { id: string } }).share.id;
+  const publicSharePage = await jsonRequest(base, `/share/${shareId}`);
+  const publicShareCsp = publicSharePage.headers.get('content-security-policy') ?? '';
+  assert.doesNotMatch(publicShareCsp, /'unsafe-eval'/);
+  assert.doesNotMatch(publicShareCsp, /'wasm-unsafe-eval'/);
   assert.equal((await jsonRequest(base, `/api/shares/${shareId}`, {
     method: 'PATCH',
     headers: { Cookie: oldCookie },

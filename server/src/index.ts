@@ -74,35 +74,22 @@ async function main() {
     res.locals.cspNonce = randomBytes(16).toString('base64');
     next();
   });
-  // Security headers. The CSP intentionally does NOT emit `upgrade-insecure-requests`
-  // (it would break plain-HTTP self-hosting). `script-src` is 'self' + per-request
-  // nonce; `style-src` allows inline styles (React inline styles + the SSR page's
-  // <style>). Note: inline <script> inside ```html render-blocks won't execute under
-  // this policy — acceptable for the marginal XSS hardening it buys.
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        useDefaults: true,
-        directives: {
-          defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", (_req, res) => `'nonce-${(res as Response).locals.cspNonce}'`],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-          fontSrc: ["'self'", 'data:'],
-          connectSrc: ["'self'", 'ws:', 'wss:'],
-          objectSrc: ["'none'"],
-          frameSrc: ["'self'", 'blob:'],
-          baseUri: ["'self'"],
-          formAction: ["'self'"],
-          frameAncestors: ["'none'"],
-          upgradeInsecureRequests: null,
-        },
-      },
-      // Allow social crawlers / other sites to load public share og:images.
-      crossOriginEmbedderPolicy: false,
-      crossOriginResourcePolicy: { policy: 'cross-origin' },
-    }),
-  );
+  // The loader itself is CSP-safe, but some otherwise browser-compatible
+  // community plugins compile WebAssembly or unpack bundled dependencies with
+  // `new Function`/`eval` (Breadcrumbs and Excalidraw are current examples).
+  // Enable those capabilities only while community-plugin mode is active. The
+  // unauthenticated public-share surface always keeps the strict policy.
+  const strictSecurityHeaders = createSecurityHeaders(false);
+  const pluginSecurityHeaders = createSecurityHeaders(true);
+  app.use((req, res, next) => {
+    const publicShare = req.path === '/share' || req.path.startsWith('/share/') || req.path.startsWith('/public/shares/');
+    void getSettings()
+      .then((current) => {
+        const pluginMode = current.plugins.enabled.length > 0 && !publicShare;
+        (pluginMode ? pluginSecurityHeaders : strictSecurityHeaders)(req, res, next);
+      })
+      .catch(next);
+  });
 
   if (!config.isProd) {
     app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
@@ -155,6 +142,42 @@ async function main() {
     console.log(`\n  WebObsidian server → http://${config.host}:${config.port}`);
     console.log(`  Vault: ${config.defaultVaultPath}`);
     console.log(`  Data:  ${config.dataDir}\n`);
+  });
+}
+
+/**
+ * Security headers shared by the strict app and community-plugin modes.
+ * `unsafe-eval` does not allow inline script tags; it only permits dynamic code
+ * generation required by trusted Obsidian plugin bundles. Public shares never
+ * receive this relaxed variant.
+ */
+function createSecurityHeaders(allowPluginCodeGeneration: boolean) {
+  return helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: [
+          "'self'",
+          (_req, res) => `'nonce-${(res as Response).locals.cspNonce}'`,
+          ...(allowPluginCodeGeneration ? ["'unsafe-eval'", "'wasm-unsafe-eval'"] : []),
+        ],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+        fontSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'", 'ws:', 'wss:'],
+        objectSrc: ["'none'"],
+        frameSrc: ["'self'", 'blob:'],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+        // Would break plain-HTTP self-hosting.
+        upgradeInsecureRequests: null,
+      },
+    },
+    // Allow social crawlers / other sites to load public share og:images.
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
   });
 }
 

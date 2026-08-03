@@ -1874,18 +1874,25 @@ export async function loadPlugins(): Promise<void> {
   }
 }
 
-export async function enablePlugin(id: string): Promise<void> {
-  await api.setPluginEnabled(id, true);
+export async function enablePlugin(id: string): Promise<boolean> {
+  const { reloadRequired } = await api.setPluginEnabled(id, true);
+  if (reloadRequired) {
+    window.location.reload();
+    return true;
+  }
   const manifest = (await api.listPlugins()).plugins.find((plugin: any) => plugin.id === id);
   if (!manifest) throw new Error('Plugin is not installed');
   await loadPlugin(id, { ...manifest, enabled: true }, true);
+  return false;
 }
 
-export async function disablePlugin(id: string): Promise<void> {
-  await api.setPluginEnabled(id, false);
+export async function disablePlugin(id: string): Promise<boolean> {
+  const { reloadRequired } = await api.setPluginEnabled(id, false);
   await unloadPlugin(id);
   const current = pluginStates.get(id);
   setPluginState({ id, name: current?.name ?? id, status: 'disabled' });
+  if (reloadRequired) window.location.reload();
+  return reloadRequired;
 }
 
 export async function reloadPlugin(id: string): Promise<void> {

@@ -86,10 +86,11 @@ export async function getPluginAsset(
 }
 
 /**
- * Browser plugin code cannot be evaluated with `new Function` in production:
- * WebObsidian deliberately keeps `unsafe-eval` out of its CSP. Serve a normal,
- * same-origin ES module which executes the plugin's CommonJS bundle inside a
- * Node-style wrapper instead. `require()` is provided by the browser runtime.
+ * The loader must not evaluate plugin source with `new Function`. Serve a
+ * normal, same-origin ES module which executes the plugin's CommonJS bundle
+ * inside a Node-style wrapper instead. `require()` is provided by the browser
+ * runtime. Plugin-authored dynamic code is handled separately by the
+ * community-plugin CSP mode.
  */
 export async function getPluginModule(id: string): Promise<string> {
   const safeId = assertSafeId(id);
@@ -156,14 +157,17 @@ async function getPluginDataPath(id: string, ensure = false): Promise<string> {
   return path.join(dir, 'data.json');
 }
 
-export async function setEnabled(id: string, enabled: boolean): Promise<void> {
+export async function setEnabled(id: string, enabled: boolean): Promise<{ reloadRequired: boolean }> {
   assertSafeId(id);
-  await updateSettings((d) => {
+  const before = await getSettings();
+  const pluginModeBefore = before.plugins.enabled.length > 0;
+  const updated = await updateSettings((d) => {
     const set = new Set(d.plugins.enabled);
     if (enabled) set.add(id);
     else set.delete(id);
     d.plugins.enabled = [...set];
   });
+  return { reloadRequired: pluginModeBefore !== (updated.plugins.enabled.length > 0) };
 }
 
 /**

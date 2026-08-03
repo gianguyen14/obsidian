@@ -313,7 +313,7 @@ export const api = {
   installPlugin: (repo: string) =>
     req<{ plugin: any }>('/api/plugins/install', { method: 'POST', body: JSON.stringify({ repo }) }),
   setPluginEnabled: (id: string, enabled: boolean) =>
-    req<{ ok: true }>(`/api/plugins/${id}/enabled`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+    req<{ ok: true; reloadRequired: boolean }>(`/api/plugins/${id}/enabled`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
   getPluginData: (id: string) =>
     req<{ data: unknown }>(`/api/plugins/${encodeURIComponent(id)}/data`),
   putPluginData: (id: string, data: unknown) =>

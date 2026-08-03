@@ -412,8 +412,13 @@ function Plugins() {
   const toggle = async (plugin: any, enabled: boolean) => {
     setMsg(`${enabled ? 'Enabling' : 'Disabling'} ${plugin.name}…`);
     try {
-      if (enabled) await enablePlugin(plugin.id);
-      else await disablePlugin(plugin.id);
+      const reloading = enabled
+        ? await enablePlugin(plugin.id)
+        : await disablePlugin(plugin.id);
+      if (reloading) {
+        setMsg(`Reloading to apply plugin security policy…`);
+        return;
+      }
       await load();
       setMsg(`${plugin.name} ${enabled ? 'enabled' : 'disabled'} ✓`);
     } catch (error: any) {
@@ -464,6 +469,9 @@ function Plugins() {
       </div>
       <p style={{ color: 'var(--text-faint)', fontSize: 12, marginTop: 14 }}>
         Plugins run as trusted code with access to your vault. Browser-compatible plugins can use files, commands, views, settings, ribbon/status items and Markdown processors. Plugins requiring Electron/Node.js remain unsupported.
+      </p>
+      <p style={{ color: 'var(--text-faint)', fontSize: 12, marginTop: 8 }}>
+        Enabling community plugins also permits trusted plugin bundles to generate JavaScript and WebAssembly dynamically. Public share pages keep the strict security policy.
       </p>
     </div>
   );

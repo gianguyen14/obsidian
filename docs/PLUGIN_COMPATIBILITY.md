@@ -6,8 +6,11 @@ optional `styles.css`, and `data.json` layout as Obsidian.
 
 ## Supported runtime surface
 
-- CSP-safe CommonJS loading through `require('obsidian')`; production does not enable
-  `unsafe-eval`.
+- CSP-safe CommonJS loading through `require('obsidian')`; the WebObsidian loader does
+  not use `eval`.
+- When at least one trusted community plugin is enabled, workspace pages permit dynamic
+  JavaScript/WebAssembly because published plugins such as Excalidraw and Breadcrumbs
+  use those capabilities internally. Public share pages always keep the strict CSP.
 - Plugin lifecycle: enable, disable, reload, cleanup, and readable load diagnostics.
 - Vault files/folders: text and binary read/write, create, rename, copy, delete, events,
   resource URLs, and the adapter subset.

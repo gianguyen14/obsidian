@@ -18,7 +18,8 @@ changes. The format is loosely based on [Keep a Changelog](https://keepachangelo
 
 ### Changed
 - Replaced the production-incompatible `new Function` plugin loader with a same-origin
-  CommonJS-to-ESM wrapper, preserving the strict CSP without `unsafe-eval`.
+  CommonJS-to-ESM wrapper. Workspace CSP permits dynamic JavaScript/WebAssembly only
+  while trusted community plugins are enabled; public shares remain strict.
 - ⋯ **More options** menu rebuilt for parity with Obsidian Desktop: backlinks-in-document,
   open linked view, open in new window, add file property, in-note Find, export to PDF,
   reveal file in navigation, and per-file version history. *(PRD 0.8)*
