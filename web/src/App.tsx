@@ -13,7 +13,7 @@ import VersionHistory from './components/VersionHistory';
 import TrashView from './components/TrashView';
 import ContextMenu from './components/ContextMenu';
 import FolderPicker from './components/FolderPicker';
-import { loadPlugins } from './lib/plugins';
+import { handlePluginFilesystemEvent, handlePluginHotkey, loadPlugins } from './lib/plugins';
 import { initUrlSync } from './lib/urlsync';
 import { useIsMobile } from './lib/useIsMobile';
 
@@ -49,7 +49,7 @@ export default function App() {
 
   useEffect(() => {
     if (!authed) return;
-    loadTree();
+    void loadTree().then(() => loadPlugins()).catch(() => {});
     // Deep link (/note/<path>) wins over the restored workspace's active note.
     const deepLink = initUrlSync();
     useStore
@@ -66,7 +66,6 @@ export default function App() {
       .then((s) => setTheme(s?.ui?.theme === 'obsidian-dark' ? 'theme-dark' : 'theme-light'))
       .catch(() => {});
     useStore.getState().loadShares(); // badge shared notes in the file tree
-    loadPlugins().catch(() => {});
     // websocket live updates
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -75,6 +74,7 @@ export default function App() {
       try {
         const msg = JSON.parse(ev.data);
         if (msg.type === 'fs') {
+          handlePluginFilesystemEvent(String(msg.event ?? 'change'), String(msg.path ?? ''));
           // coalesce bursts of fs events into a single tree refresh
           window.clearTimeout(treeTimer);
           treeTimer = window.setTimeout(() => loadTree(), 800);
@@ -94,6 +94,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (handlePluginHotkey(e)) return;
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       const k = e.key.toLowerCase();

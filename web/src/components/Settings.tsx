@@ -1,17 +1,32 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
 import QRCode from 'qrcode';
 import { useStore } from '../lib/store';
 import { api, type SecurityStatus } from '../lib/api';
 import Icon from './Icon';
+import PluginDomMount from './PluginDomMount';
+import {
+  disablePlugin,
+  enablePlugin,
+  getPluginRuntimeSnapshot,
+  reloadPlugin,
+  subscribePluginRuntime,
+  type PluginSettingContribution,
+} from '../lib/plugins';
 
-type Section = 'vault' | 'git' | 'api' | 'sharing' | 'plugins' | 'appearance' | 'account' | 'about';
+type CoreSection = 'vault' | 'git' | 'api' | 'sharing' | 'plugins' | 'appearance' | 'account' | 'about';
+type Section = CoreSection | `plugin:${string}`;
 
 export default function Settings() {
   const open = useStore((s) => s.settingsOpen);
   const setOpen = useStore((s) => s.setSettings);
   const [section, setSection] = useState<Section>('vault');
   const [settings, setSettings] = useState<any>(null);
+  const pluginRuntime = useSyncExternalStore(
+    subscribePluginRuntime,
+    getPluginRuntimeSnapshot,
+    getPluginRuntimeSnapshot,
+  );
 
   useEffect(() => {
     if (open) api.getSettings().then(setSettings).catch(() => {});
@@ -24,9 +39,18 @@ export default function Settings() {
       <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
         <div className="settings-layout">
           <div className="settings-nav">
-            {(['vault', 'git', 'api', 'sharing', 'plugins', 'appearance', 'account', 'about'] as Section[]).map((s) => (
+            {(['vault', 'git', 'api', 'sharing', 'plugins', 'appearance', 'account', 'about'] as CoreSection[]).map((s) => (
               <button key={s} className={section === s ? 'active' : ''} onClick={() => setSection(s)}>
                 {labels[s]}
+              </button>
+            ))}
+            {pluginRuntime.settingTabs.map((tab) => (
+              <button
+                key={tab.id}
+                className={section === `plugin:${tab.id}` ? 'active' : ''}
+                onClick={() => setSection(`plugin:${tab.id}`)}
+              >
+                {tab.name}
               </button>
             ))}
           </div>
@@ -39,6 +63,9 @@ export default function Settings() {
             {settings && section === 'appearance' && <Appearance s={settings} />}
             {section === 'account' && <AccountSettings s={settings} reload={() => api.getSettings().then(setSettings)} />}
             {section === 'about' && <About />}
+            {section.startsWith('plugin:') && (
+              <PluginSettingsPanel tab={pluginRuntime.settingTabs.find((tab) => `plugin:${tab.id}` === section)} />
+            )}
           </div>
         </div>
       </div>
@@ -46,7 +73,7 @@ export default function Settings() {
   );
 }
 
-const labels: Record<Section, string> = {
+const labels: Record<CoreSection, string> = {
   vault: 'Vault & Files',
   git: 'GitHub Sync',
   api: 'API Keys',
@@ -56,6 +83,22 @@ const labels: Record<Section, string> = {
   account: 'Account',
   about: 'About',
 };
+
+function PluginSettingsPanel({ tab }: { tab?: PluginSettingContribution }) {
+  useEffect(() => {
+    if (!tab) return;
+    tab.tab.containerEl.replaceChildren();
+    tab.tab.display();
+    return () => tab.tab.hide();
+  }, [tab]);
+  if (!tab) return <div>Plugin settings are no longer available.</div>;
+  return (
+    <div>
+      <h2>{tab.name}</h2>
+      <PluginDomMount el={tab.tab.containerEl} className="plugin-settings-host" />
+    </div>
+  );
+}
 
 function Row({ name, desc, children }: { name: string; desc?: string; children: React.ReactNode }) {
   return (
@@ -354,12 +397,29 @@ function Plugins() {
   const [plugins, setPlugins] = useState<any[]>([]);
   const [repo, setRepo] = useState('');
   const [msg, setMsg] = useState('');
+  const runtime = useSyncExternalStore(
+    subscribePluginRuntime,
+    getPluginRuntimeSnapshot,
+    getPluginRuntimeSnapshot,
+  );
   const load = () => api.listPlugins().then((r) => setPlugins(r.plugins)).catch(() => {});
   useEffect(() => { load(); }, []);
   const install = async () => {
     setMsg('Installing…');
     try { await api.installPlugin(repo); setMsg('Installed ✓'); setRepo(''); await load(); }
     catch (e: any) { setMsg(`Error: ${e.message}`); }
+  };
+  const toggle = async (plugin: any, enabled: boolean) => {
+    setMsg(`${enabled ? 'Enabling' : 'Disabling'} ${plugin.name}…`);
+    try {
+      if (enabled) await enablePlugin(plugin.id);
+      else await disablePlugin(plugin.id);
+      await load();
+      setMsg(`${plugin.name} ${enabled ? 'enabled' : 'disabled'} ✓`);
+    } catch (error: any) {
+      setMsg(`Error: ${error.message}`);
+      await load();
+    }
   };
   return (
     <div>
@@ -378,16 +438,48 @@ function Plugins() {
             <div className="info">
               <div className="name">{p.name} <span style={{ color: 'var(--text-faint)' }}>v{p.version}</span></div>
               <div className="desc">{p.description}</div>
+              <PluginStatus state={runtime.plugins[p.id]} desktopOnly={p.isDesktopOnly} />
             </div>
-            <label>
-              <input type="checkbox" checked={p.enabled} onChange={async (e) => { await api.setPluginEnabled(p.id, e.target.checked); load(); }} /> enabled
-            </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {p.enabled && !p.isDesktopOnly && (
+                <button className="btn secondary" onClick={async () => {
+                  setMsg(`Reloading ${p.name}…`);
+                  try { await reloadPlugin(p.id); setMsg(`${p.name} reloaded ✓`); }
+                  catch (error: any) { setMsg(`Error: ${error.message}`); }
+                }}>
+                  Reload
+                </button>
+              )}
+              <label>
+                <input
+                  type="checkbox"
+                  checked={p.enabled}
+                  disabled={runtime.plugins[p.id]?.status === 'loading' || (!p.enabled && p.isDesktopOnly)}
+                  onChange={(e) => void toggle(p, e.target.checked)}
+                /> enabled
+              </label>
+            </div>
           </div>
         ))}
       </div>
       <p style={{ color: 'var(--text-faint)', fontSize: 12, marginTop: 14 }}>
-        Note: WebObsidian supports a subset of the Obsidian plugin API. Most metadata/markdown plugins work; plugins relying on Electron/Node internals may not.
+        Plugins run as trusted code with access to your vault. Browser-compatible plugins can use files, commands, views, settings, ribbon/status items and Markdown processors. Plugins requiring Electron/Node.js remain unsupported.
       </p>
+    </div>
+  );
+}
+
+function PluginStatus({ state, desktopOnly }: { state?: any; desktopOnly?: boolean }) {
+  const status = desktopOnly ? 'incompatible' : state?.status ?? 'disabled';
+  const colors: Record<string, string> = {
+    loaded: '#46a758', loading: '#d19a00', failed: '#e5534b', incompatible: '#e5534b', disabled: 'var(--text-faint)',
+  };
+  const labels: Record<string, string> = {
+    loaded: 'Loaded', loading: 'Loading…', failed: 'Load failed', incompatible: 'Not compatible', disabled: 'Disabled',
+  };
+  return (
+    <div className="plugin-runtime-status" style={{ color: colors[status], fontSize: 12, marginTop: 5 }}>
+      {labels[status] ?? status}{state?.message ? ` — ${state.message}` : ''}
     </div>
   );
 }

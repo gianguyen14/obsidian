@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import Icon from './Icon';
+import PluginDomMount from './PluginDomMount';
+import { getPluginRuntimeSnapshot, subscribePluginRuntime } from '../lib/plugins';
 
 export default function Ribbon({ onTheme }: { onTheme: () => void }) {
   const setLeftPanel = useStore((s) => s.setLeftPanel);
@@ -12,6 +14,11 @@ export default function Ribbon({ onTheme }: { onTheme: () => void }) {
   const openDailyNote = useStore((s) => s.openDailyNote);
   const notify = useStore((s) => s.notify);
   const loadTree = useStore((s) => s.loadTree);
+  const pluginRuntime = useSyncExternalStore(
+    subscribePluginRuntime,
+    getPluginRuntimeSnapshot,
+    getPluginRuntimeSnapshot,
+  );
 
   // Show the Sync-now button only when git sync is enabled in settings.
   const [gitEnabled, setGitEnabled] = useState(false);
@@ -61,6 +68,9 @@ export default function Ribbon({ onTheme }: { onTheme: () => void }) {
       <button title="Command palette (⌘P)" onClick={() => setPalette(true, 'commands')}>
         <Icon name="command" size={18} />
       </button>
+      {pluginRuntime.ribbonItems.map((item) => (
+        <PluginDomMount key={item.id} el={item.el} className="plugin-ribbon-item" />
+      ))}
       <div className="spacer" />
       {gitEnabled && (
         <button title={syncing ? 'Syncing…' : 'Sync now'} onClick={sync} disabled={syncing}>

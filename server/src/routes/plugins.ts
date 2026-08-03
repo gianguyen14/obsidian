@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
+import { mimeFor } from '../services/mime.js';
+import { sendFileWithRange } from '../services/httpfile.js';
 import * as plugins from '../services/plugins.js';
 
 export const pluginsRouter = Router();
@@ -28,22 +30,52 @@ pluginsRouter.patch(
   }),
 );
 
-// Serve plugin assets to the browser loader.
+pluginsRouter.get(
+  '/:id/data',
+  asyncHandler(async (req, res) => {
+    res.json({ data: await plugins.readPluginData(req.params.id) });
+  }),
+);
+
+pluginsRouter.put(
+  '/:id/data',
+  asyncHandler(async (req, res) => {
+    await plugins.writePluginData(req.params.id, req.body?.data);
+    res.json({ ok: true });
+  }),
+);
+
+// CSP-safe CommonJS-to-ESM wrapper. This stays same-origin, so production does
+// not need to weaken script-src with unsafe-eval or blob:.
+pluginsRouter.get(
+  '/:id/module.js',
+  asyncHandler(async (req, res) => {
+    res
+      .setHeader('Content-Type', 'application/javascript; charset=utf-8')
+      .setHeader('Cache-Control', 'no-cache')
+      .send(await plugins.getPluginModule(req.params.id));
+  }),
+);
+
+// Serve top-level plugin assets. Nested assets use the wildcard route below.
 pluginsRouter.get(
   '/:id/:asset',
   asyncHandler(async (req, res) => {
     const asset = req.params.asset;
-    if (!['main.js', 'styles.css', 'manifest.json'].includes(asset)) {
-      res.status(400).json({ error: 'invalid asset' });
-      return;
-    }
-    const body = await plugins.getPluginAsset(req.params.id, asset as any);
-    const type =
-      asset === 'main.js'
-        ? 'application/javascript'
-        : asset === 'styles.css'
-          ? 'text/css'
-          : 'application/json';
-    res.setHeader('Content-Type', type).send(body);
+    const file = await plugins.getPluginFilePath(req.params.id, asset);
+    await sendFileWithRange(req, res, file, mimeFor(asset));
+  }),
+);
+
+
+// CSS and plugin UIs commonly reference fonts/images relative to styles.css.
+// Serve nested resources after every API route above, with path + symlink guards
+// enforced by the service.
+pluginsRouter.get(
+  '/:id/*',
+  asyncHandler(async (req, res) => {
+    const relative = String(req.params[0] ?? '');
+    const file = await plugins.getPluginFilePath(req.params.id, relative);
+    await sendFileWithRange(req, res, file, mimeFor(relative));
   }),
 );

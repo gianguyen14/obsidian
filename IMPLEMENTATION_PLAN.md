@@ -66,8 +66,9 @@ Cập nhật lần cuối: 2026-06-27 (security fix — chặn leo thang quyền
 
 ## Phase 8 — Community plugins — FR-8
 - [x] M8.1 Đọc `.obsidian/plugins/*` (manifest + main.js)
-- [x] M8.2 Obsidian API shim (App, Vault, Workspace, Plugin, Notice, Setting…)
-- [x] M8.3 Plugin loader (eval main.js) + enable/disable
+- [x] M8.2 Obsidian API compatibility runtime (vault/workspace/events, command/hotkey,
+  ribbon/status, settings, custom view, Markdown processor, data.json)
+- [x] M8.3 CSP-safe CommonJS module loader + live enable/disable/reload + diagnostics
 - [x] M8.4 Browse + install từ community (GitHub releases)
 
 ## Phase 9 — Web frontend — FR-2

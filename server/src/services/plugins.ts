@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { getVaultRoot } from './vault.js';
 import { getSettings, updateSettings } from './settings.js';
 
@@ -8,7 +9,7 @@ import { getSettings, updateSettings } from './settings.js';
  * Plugins live in `<vault>/.obsidian/plugins/<id>/` with manifest.json + main.js
  * (+ optional styles.css), exactly like the desktop app. The server lists,
  * installs (from GitHub releases) and toggles them; the browser loads main.js
- * against the Obsidian API shim (see web/src/lib/obsidian-shim).
+ * against the Obsidian API compatibility runtime (see web/src/lib/plugins.ts).
  */
 
 export interface PluginManifest {
@@ -81,9 +82,78 @@ export async function getPluginAsset(
   id: string,
   asset: 'main.js' | 'styles.css' | 'manifest.json',
 ): Promise<string> {
-  assertSafeId(id);
-  const dir = await pluginsDir();
-  return fs.readFile(path.join(dir, id, asset), 'utf8');
+  return fs.readFile(await getPluginFilePath(id, asset), 'utf8');
+}
+
+/**
+ * Browser plugin code cannot be evaluated with `new Function` in production:
+ * WebObsidian deliberately keeps `unsafe-eval` out of its CSP. Serve a normal,
+ * same-origin ES module which executes the plugin's CommonJS bundle inside a
+ * Node-style wrapper instead. `require()` is provided by the browser runtime.
+ */
+export async function getPluginModule(id: string): Promise<string> {
+  const safeId = assertSafeId(id);
+  const code = await getPluginAsset(safeId, 'main.js');
+  return [
+    'const __woModule = { exports: {} };',
+    '((module, exports, require) => {',
+    code,
+    `})(__woModule, __woModule.exports, (name) => globalThis.__webObsidianRequire(${JSON.stringify(safeId)}, name));`,
+    'const __woPlugin = __woModule.exports?.default ?? __woModule.exports;',
+    'export default __woPlugin;',
+    `//# sourceURL=/api/plugins/${safeId}/module.js`,
+  ].join('\n');
+}
+
+/** Resolve an arbitrary plugin-owned asset without allowing traversal/symlinks. */
+export async function getPluginFilePath(id: string, relative: string): Promise<string> {
+  const safeId = assertSafeId(id);
+  if (!relative || relative.includes('\0') || path.isAbsolute(relative)) {
+    throw Object.assign(new Error('Invalid plugin asset path'), { status: 400 });
+  }
+  const base = path.resolve(await pluginsDir(), safeId);
+  const target = path.resolve(base, relative.replaceAll('\\', '/'));
+  if (target === base || !target.startsWith(base + path.sep)) {
+    throw Object.assign(new Error('Invalid plugin asset path'), { status: 400 });
+  }
+  const realBase = await fs.realpath(base);
+  const realTarget = await fs.realpath(target);
+  if (!realTarget.startsWith(realBase + path.sep)) {
+    throw Object.assign(new Error('Plugin asset escapes its directory'), { status: 400 });
+  }
+  const stat = await fs.stat(realTarget);
+  if (!stat.isFile()) throw Object.assign(new Error('Plugin asset not found'), { status: 404 });
+  return realTarget;
+}
+
+export async function readPluginData(id: string): Promise<unknown> {
+  try {
+    return JSON.parse(await fs.readFile(await getPluginDataPath(id), 'utf8'));
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return {};
+    if (error instanceof SyntaxError) {
+      throw Object.assign(new Error('Plugin data.json is invalid JSON'), { status: 500 });
+    }
+    throw error;
+  }
+}
+
+export async function writePluginData(id: string, data: unknown): Promise<void> {
+  const file = await getPluginDataPath(id, true);
+  const tmp = `${file}.tmp-${randomBytes(8).toString('hex')}`;
+  try {
+    await fs.writeFile(tmp, JSON.stringify(data ?? {}, null, 2), { encoding: 'utf8', mode: 0o600 });
+    await fs.rename(tmp, file);
+  } finally {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+  }
+}
+
+async function getPluginDataPath(id: string, ensure = false): Promise<string> {
+  const safeId = assertSafeId(id);
+  const dir = path.join(await pluginsDir(), safeId);
+  if (ensure) await fs.mkdir(dir, { recursive: true });
+  return path.join(dir, 'data.json');
 }
 
 export async function setEnabled(id: string, enabled: boolean): Promise<void> {

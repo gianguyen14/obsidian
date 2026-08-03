@@ -258,7 +258,12 @@ webobsidian/
 
 ### FR-8 · Community plugins
 - Đọc danh sách plugin từ `.obsidian/plugins/*` (manifest.json, main.js).
-- Plugin loader nạp `main.js` trong sandbox với **Obsidian API shim** (App, Vault, Workspace, Plugin, Notice, Setting…).
+- Plugin loader nạp `main.js` qua module wrapper cùng origin, tương thích
+  `require('obsidian')` mà không cần CSP `unsafe-eval`; plugin là mã tin cậy giống mô
+  hình community plugin của Obsidian, không phải security sandbox.
+- **Obsidian API compatibility runtime**: vault/workspace/events, command/hotkey,
+  ribbon/status, settings, custom view/extension, Markdown processor và `data.json`.
+- Hiển thị riêng trạng thái installed/enabled/loaded/failed/incompatible cùng lỗi chẩn đoán.
 - Browse & cài plugin từ community list (qua GitHub releases) — tải về thư mục plugins.
 - Bật/tắt plugin; lưu trạng thái trong settings.
 

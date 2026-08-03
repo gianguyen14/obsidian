@@ -7,6 +7,9 @@ changes. The format is loosely based on [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- Browser-compatible Obsidian community-plugin runtime: commands/hotkeys, ribbon and
+  status items, custom views/extensions, plugin settings, Markdown processors, vault
+  APIs/events, plugin `data.json`, nested assets and load diagnostics.
 - Open-source repository scaffolding: `README.md` (with logo), `LICENSE` (MIT),
   `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, GitHub issue/PR templates and a
   CI workflow (typecheck, build, Docker image).
@@ -14,6 +17,8 @@ changes. The format is loosely based on [Keep a Changelog](https://keepachangelo
   `POST /api/files/copy` for recursive copy). *(PRD 0.9)*
 
 ### Changed
+- Replaced the production-incompatible `new Function` plugin loader with a same-origin
+  CommonJS-to-ESM wrapper, preserving the strict CSP without `unsafe-eval`.
 - ⋯ **More options** menu rebuilt for parity with Obsidian Desktop: backlinks-in-document,
   open linked view, open in new window, add file property, in-note Find, export to PDF,
   reveal file in navigation, and per-file version history. *(PRD 0.8)*

@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useSyncExternalStore } from 'react';
 import { useStore, GRAPH_PATH, type ContextMenuItem } from '../lib/store';
 import { api } from '../lib/api';
 import Editor from './Editor';
@@ -15,10 +15,13 @@ import { editorFind, getActiveEditor } from '../lib/activeEditor';
 import { triggerAddProperty } from '../lib/livePreview';
 import { pathToUrl } from '../lib/urlsync';
 import { VIDEO_EXT_RE, AUDIO_EXT_RE } from '../lib/media';
+import { getPluginRuntimeSnapshot, isPluginViewPath, subscribePluginRuntime } from '../lib/plugins';
+import PluginViewHost from './PluginViewHost';
 
 const ExcalidrawView = lazy(() => import('./ExcalidrawView'));
 
 function EditorPane() {
+  useSyncExternalStore(subscribePluginRuntime, getPluginRuntimeSnapshot, getPluginRuntimeSnapshot);
   const activePath = useStore((s) => s.activePath);
   const viewMode = useStore((s) => s.viewMode);
   const isMd = activePath ? /\.(md|markdown)$/i.test(activePath) : false;
@@ -27,6 +30,10 @@ function EditorPane() {
   const isExcalidraw = activePath ? /\.excalidraw$/i.test(activePath) : false;
   const isVideo = activePath ? VIDEO_EXT_RE.test(activePath) : false;
   const isAudio = activePath ? AUDIO_EXT_RE.test(activePath) : false;
+
+  if (activePath && isPluginViewPath(activePath)) {
+    return <PluginViewHost path={activePath} />;
+  }
 
   if (activePath && isCanvas) {
     return <CanvasView />;
@@ -60,9 +67,10 @@ function EditorPane() {
       </div>
     );
   }
-  // Reading mode = the same Live Preview editor in read-only (identical render).
-  void isMd;
-  void viewMode;
+  // Obsidian post-processors run against rendered Reading view DOM. Live Preview
+  // remains CodeMirror-based; switching Reading to Preview gives community
+  // plugins the same DOM contract as desktop Obsidian.
+  if (activePath && isMd && viewMode === 'reading') return <Preview />;
   return <Editor />;
 }
 

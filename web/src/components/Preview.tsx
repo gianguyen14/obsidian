@@ -8,6 +8,7 @@ import { calloutIconSvg } from '../lib/callouts';
 import { openLightbox } from '../lib/imageLightbox';
 import { hydrateExcalidrawEmbeds } from '../lib/excalidraw';
 import { api } from '../lib/api';
+import { runMarkdownPostProcessors } from '../lib/plugins';
 
 /** Syntax-highlight a `<code class="language-x">` block with the SAME CodeMirror
  *  grammars Live Preview uses (token classes styled by the Obsidian palette). */
@@ -184,11 +185,19 @@ export default function Preview({ source }: { source?: string }) {
       });
     }
     const cleanupExcalidraw = hydrateExcalidrawEmbeds(root, openWikilink);
+    let cleanupPlugins = () => {};
+    void runMarkdownPostProcessors(root, activePath ?? '')
+      .then((cleanup) => {
+        if (cancelled) cleanup();
+        else cleanupPlugins = cleanup;
+      })
+      .catch((error) => console.error('[plugin] Markdown post-processor failed', error));
     return () => {
       cancelled = true;
       cleanupExcalidraw();
+      cleanupPlugins();
     };
-  }, [html, openWikilink]);
+  }, [html, openWikilink, activePath]);
 
   const onClick = (e: React.MouseEvent) => {
     // Click an embedded image → full-screen zoom/pan viewer.

@@ -210,6 +210,18 @@ export const api = {
     if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).error ?? 'Upload failed', res.status);
     return res.json() as Promise<{ ok: true; path: string; size: number }>;
   },
+  readBinary: async (path: string) => {
+    const res = await fetch(`/api/files/content?path=${encodeURIComponent(path)}`, { credentials: 'include' });
+    if (!res.ok) throw new ApiError(res.statusText || 'Unable to read binary file', res.status);
+    return res.arrayBuffer();
+  },
+  writeBinary: async (path: string, data: ArrayBuffer) => {
+    const normalized = path.replaceAll('\\', '/');
+    const slash = normalized.lastIndexOf('/');
+    const dir = slash >= 0 ? normalized.slice(0, slash) : '';
+    const name = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+    return api.upload(new File([data], name), dir);
+  },
   rawUrl: (path: string) => `/api/files/content?path=${encodeURIComponent(path)}`,
 
   // search & links
@@ -302,4 +314,11 @@ export const api = {
     req<{ plugin: any }>('/api/plugins/install', { method: 'POST', body: JSON.stringify({ repo }) }),
   setPluginEnabled: (id: string, enabled: boolean) =>
     req<{ ok: true }>(`/api/plugins/${id}/enabled`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  getPluginData: (id: string) =>
+    req<{ data: unknown }>(`/api/plugins/${encodeURIComponent(id)}/data`),
+  putPluginData: (id: string, data: unknown) =>
+    req<{ ok: true }>(`/api/plugins/${encodeURIComponent(id)}/data`, {
+      method: 'PUT',
+      body: JSON.stringify({ data }),
+    }),
 };

@@ -282,6 +282,9 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 .ribbon button:hover { background: var(--bg-modifier-hover); color: var(--text-normal); }
 .ribbon button.active { color: var(--text-accent); }
 .ribbon .spacer { flex: 1; }
+.plugin-dom-host.plugin-ribbon-item { display: contents; }
+.plugin-ribbon-button { padding: 8px; }
+.plugin-ribbon-button svg { width: 18px; height: 18px; }
 
 /* Sidebars */
 .sidebar, .right-sidebar {
@@ -884,6 +887,22 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 }
 .status-bar .clickable { cursor: pointer; display: flex; align-items: center; gap: 5px; }
 .status-bar .clickable:hover { color: var(--text-normal); }
+.plugin-dom-host.plugin-status-item { display: contents; }
+.plugin-status-bar-item { display: inline-flex; align-items: center; gap: 4px; }
+
+.plugin-view-host, .plugin-view-host > .plugin-view-content {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+.plugin-view-content > .view-content { min-height: 100%; box-sizing: border-box; }
+.plugin-view-loading, .plugin-view-error { padding: 24px; color: var(--text-muted); }
+.plugin-view-error { color: var(--text-error, #e5534b); }
+.plugin-settings-host > .plugin-setting-tab { width: 100%; }
+.plugin-modal-bg { z-index: 1200; }
+.plugin-modal .modal-title { font-size: 20px; font-weight: 650; margin-bottom: 12px; }
+.plugin-notice { z-index: 1400; }
 
 /* Modal / palette */
 .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: grid; place-items: start center;

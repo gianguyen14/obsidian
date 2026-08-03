@@ -60,8 +60,9 @@ stack runs from a single `docker compose up`.
   public page at `/share/<token>`, optionally password-protected.
 - 🤖 **Agent API** — scoped API keys (`read` / `write` / `search`) let AI agents work with
   the vault over REST at `/api/v1`. See [docs/AGENT_API.md](docs/AGENT_API.md).
-- 🧩 **Community plugins** — install Obsidian plugins from GitHub; loaded against an
-  Obsidian-API compatibility shim (subset support).
+- 🧩 **Community plugins** — CSP-safe loading with commands, hotkeys, custom views,
+  settings, ribbon/status items, Markdown processors, plugin data and clear diagnostics.
+  See the [compatibility matrix](docs/PLUGIN_COMPATIBILITY.md).
 - 📱 **Responsive / mobile** — drawer sidebars, edge-swipe, an on-keyboard formatting
   toolbar, and touch-friendly targets, à la Obsidian Mobile.
 - 🗃️ **Pure-JSON config** — everything lives in `data/settings.json`. No database.
@@ -336,8 +337,9 @@ See [PRD.md §2](PRD.md) for the full design.
 - ✅ Works directly on an existing Obsidian vault, including `.obsidian/` config.
 - ⚠️ **Single-user (v1)** — no real-time multi-user collaborative editing yet.
 - ⚠️ Git sync replaces Obsidian Sync/Publish.
-- ⚠️ Community-plugin support is a **subset** of the Obsidian API; plugins relying on
-  Electron/Node internals may not work.
+- ⚠️ Community-plugin support targets the public browser-compatible Obsidian API;
+  Electron/Node and private-internal plugins are not supported. See
+  [Community plugin compatibility](docs/PLUGIN_COMPATIBILITY.md).
 
 ---
 

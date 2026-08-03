@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useStore } from '../lib/store';
 import { api, type TreeNode } from '../lib/api';
+import {
+  canRunPluginCommand,
+  getPluginRuntimeSnapshot,
+  runPluginCommand,
+  subscribePluginRuntime,
+} from '../lib/plugins';
 
 interface Cmd {
   id: string;
@@ -44,6 +50,11 @@ export default function CommandPalette() {
   const notify = useStore((s) => s.notify);
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
+  const pluginRuntime = useSyncExternalStore(
+    subscribePluginRuntime,
+    getPluginRuntimeSnapshot,
+    getPluginRuntimeSnapshot,
+  );
 
   const files = useMemo(() => flatten(tree), [tree]);
 
@@ -73,8 +84,15 @@ export default function CommandPalette() {
             notify('Failed to rebuild search index');
           }
         } },
+      ...pluginRuntime.commands
+        .filter((command) => canRunPluginCommand(command.id))
+        .map((command) => ({
+          id: command.id,
+          title: `${command.pluginName}: ${command.name}`,
+          run: () => { runPluginCommand(command.id); },
+        })),
     ],
-    [save, setLeftPanel, setGraph, setSettings, setTrash, setViewMode, activePath, toggleBookmark, openToSide, openDailyNote, newNote, newDrawing, newCanvas, notify],
+    [save, setLeftPanel, setGraph, setSettings, setTrash, setViewMode, activePath, toggleBookmark, openToSide, openDailyNote, newNote, newDrawing, newCanvas, notify, pluginRuntime.revision],
   );
 
   const items = useMemo(() => {

@@ -232,6 +232,66 @@ test('security-sensitive setup, session and vault boundaries', async () => {
     [],
   );
 
+  // Community plugins are loaded through a same-origin ESM wrapper. This keeps
+  // production CSP strict (no unsafe-eval), while preserving Obsidian's bundled
+  // CommonJS `require('obsidian')` contract. Plugin data and nested resources
+  // must remain confined to the plugin's own directory.
+  const pluginDir = path.join(vaultDir, '.obsidian', 'plugins', 'runtime-smoke');
+  await fs.mkdir(path.join(pluginDir, 'fonts'), { recursive: true });
+  await Promise.all([
+    fs.writeFile(path.join(pluginDir, 'manifest.json'), JSON.stringify({
+      id: 'runtime-smoke',
+      name: 'Runtime smoke',
+      version: '1.0.0',
+      minAppVersion: '1.0.0',
+      description: 'Exercises the browser compatibility runtime',
+      author: 'WebObsidian',
+    })),
+    fs.writeFile(path.join(pluginDir, 'main.js'), "const { Plugin } = require('obsidian'); module.exports = class extends Plugin { onload() {} };"),
+    fs.writeFile(path.join(pluginDir, 'styles.css'), '@font-face{font-family:smoke;src:url(fonts/test.woff2)}'),
+    fs.writeFile(path.join(pluginDir, 'fonts', 'test.woff2'), Buffer.from([0, 1, 2, 3])),
+  ]);
+
+  const installedPlugins = await jsonRequest(base, '/api/plugins/', { headers: { Cookie: oldCookie } });
+  assert.equal(installedPlugins.status, 200);
+  assert.equal((await installedPlugins.json() as { plugins: { id: string }[] }).plugins[0]?.id, 'runtime-smoke');
+  assert.equal((await jsonRequest(base, '/api/plugins/runtime-smoke/enabled', {
+    method: 'PATCH', headers: { Cookie: oldCookie }, body: JSON.stringify({ enabled: true }),
+  })).status, 200);
+
+  const pluginModule = await jsonRequest(base, '/api/plugins/runtime-smoke/module.js', { headers: { Cookie: oldCookie } });
+  assert.equal(pluginModule.status, 200);
+  assert.match(pluginModule.headers.get('content-type') ?? '', /application\/javascript/);
+  const moduleSource = await pluginModule.text();
+  assert.match(moduleSource, /globalThis\.__webObsidianRequire\("runtime-smoke", name\)/);
+  assert.match(moduleSource, /module\.exports = class extends Plugin/);
+  const runtimeGlobal = globalThis as typeof globalThis & { __webObsidianRequire?: (id: string, name: string) => unknown };
+  runtimeGlobal.__webObsidianRequire = (id, name) => {
+    assert.equal(id, 'runtime-smoke');
+    assert.equal(name, 'obsidian');
+    return { Plugin: class {} };
+  };
+  try {
+    const wrapped = await import(`data:text/javascript;base64,${Buffer.from(moduleSource).toString('base64')}`);
+    assert.equal(typeof wrapped.default, 'function');
+  } finally {
+    delete runtimeGlobal.__webObsidianRequire;
+  }
+
+  const emptyPluginData = await jsonRequest(base, '/api/plugins/runtime-smoke/data', { headers: { Cookie: oldCookie } });
+  assert.deepEqual(await emptyPluginData.json(), { data: {} });
+  assert.equal((await jsonRequest(base, '/api/plugins/runtime-smoke/data', {
+    method: 'PUT', headers: { Cookie: oldCookie }, body: JSON.stringify({ data: { enabled: true, count: 3 } }),
+  })).status, 200);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(pluginDir, 'data.json'), 'utf8')), { enabled: true, count: 3 });
+
+  const nestedPluginAsset = await jsonRequest(base, '/api/plugins/runtime-smoke/fonts/test.woff2', { headers: { Cookie: oldCookie } });
+  assert.equal(nestedPluginAsset.status, 200);
+  assert.match(nestedPluginAsset.headers.get('content-type') ?? '', /font\/woff2/);
+  assert.deepEqual(Buffer.from(await nestedPluginAsset.arrayBuffer()), Buffer.from([0, 1, 2, 3]));
+  const pluginTraversal = await jsonRequest(base, '/api/plugins/runtime-smoke/%2e%2e%2fmanifest.json', { headers: { Cookie: oldCookie } });
+  assert.equal(pluginTraversal.status, 400);
+
   const shareResponse = await jsonRequest(base, '/api/shares', {
     method: 'POST',
     headers: { Cookie: oldCookie },

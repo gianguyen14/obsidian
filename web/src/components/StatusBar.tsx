@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import Icon from './Icon';
+import PluginDomMount from './PluginDomMount';
+import { getPluginRuntimeSnapshot, subscribePluginRuntime } from '../lib/plugins';
 
 export default function StatusBar() {
   const content = useStore((s) => s.content);
@@ -11,6 +13,11 @@ export default function StatusBar() {
   const notify = useStore((s) => s.notify);
   const [git, setGit] = useState<any>(null);
   const [syncing, setSyncing] = useState(false);
+  const pluginRuntime = useSyncExternalStore(
+    subscribePluginRuntime,
+    getPluginRuntimeSnapshot,
+    getPluginRuntimeSnapshot,
+  );
 
   const refresh = () => api.gitStatus().then(setGit).catch(() => setGit(null));
   useEffect(() => {
@@ -49,6 +56,9 @@ export default function StatusBar() {
       {dirty && <span>Saving…</span>}
       {isText && <span>{words} words</span>}
       {isText && <span>{content.length} characters</span>}
+      {pluginRuntime.statusItems.map((item) => (
+        <PluginDomMount key={item.id} el={item.el} className="plugin-status-item" />
+      ))}
       <span className="clickable" title="Git sync" onClick={sync}>
         <Icon name="refresh-cw" size={13} style={syncing ? { animation: 'spin 1s linear infinite' } : undefined} />
         {gitLabel}
