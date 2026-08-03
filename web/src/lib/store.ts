@@ -529,7 +529,14 @@ export const useStore = create<AppState>()(
         if (!activePath || !dirty) return;
         if (!TEXT_RE.test(activePath)) return;
         await api.write(activePath, content);
-        set({ dirty: false });
+        // Do not mark a newer edit as saved when an older request completes.
+        // This matters for Excalidraw, where the scene may change while the
+        // previous autosave is still in flight.
+        set((state) => (
+          state.activePath === activePath && state.content === content
+            ? { dirty: false }
+            : {}
+        ));
       },
 
       createNote: async (path, body) => {

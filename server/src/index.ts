@@ -230,7 +230,9 @@ function startWatcher(root: string, usePolling: boolean) {
     // Ignore VCS/dep/trash dirs AND `.obsidian` — the desktop Obsidian app
     // rewrites its workspace/state files constantly, which otherwise floods the
     // server with events (→ broadcasts → full tree refetches) and pins the CPU.
-    ignored: (p) => /(^|[/\\])(\.git|\.obsidian|node_modules|\.trash)([/\\]|$)/.test(p),
+    ignored: (p) =>
+      /(^|[/\\])(\.git|\.obsidian|node_modules|\.trash)([/\\]|$)/.test(p) ||
+      /(^|[/\\])\.webobsidian-tmp-[^/\\]+$/.test(p),
     ignoreInitial: true,
     persistent: true,
     usePolling,

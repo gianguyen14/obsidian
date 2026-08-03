@@ -203,6 +203,35 @@ test('security-sensitive setup, session and vault boundaries', async () => {
   assert.equal(drawingRead.status, 200);
   assert.equal((await drawingRead.json() as { content: string }).content, drawing);
 
+  // Excalidraw can issue overlapping autosaves (and multiple browser tabs can
+  // save the same drawing at once). Every atomic write must use its own temp
+  // file; timestamp-only names used to collide and make one request fail with
+  // ENOENT while renaming the shared temp file.
+  const concurrentDrawings = Array.from({ length: 64 }, (_, index) => JSON.stringify({
+    type: 'excalidraw',
+    version: 2,
+    source: 'webobsidian',
+    elements: [],
+    appState: { name: `concurrent-${index}` },
+    files: {},
+  }));
+  const concurrentWrites = await Promise.all(concurrentDrawings.map((content) =>
+    jsonRequest(base, '/api/files/content', {
+      method: 'PUT',
+      headers: { Cookie: oldCookie },
+      body: JSON.stringify({ path: 'Concurrent.excalidraw', content }),
+    })));
+  assert.deepEqual(concurrentWrites.map((response) => response.status), Array(64).fill(200));
+  const concurrentRead = await jsonRequest(base, '/api/files/content?path=Concurrent.excalidraw', {
+    headers: { Cookie: oldCookie },
+  });
+  assert.equal(concurrentRead.status, 200);
+  assert.ok(concurrentDrawings.includes((await concurrentRead.json() as { content: string }).content));
+  assert.deepEqual(
+    (await fs.readdir(vaultDir)).filter((name) => name.includes('webobsidian-tmp-')),
+    [],
+  );
+
   const shareResponse = await jsonRequest(base, '/api/shares', {
     method: 'POST',
     headers: { Cookie: oldCookie },
