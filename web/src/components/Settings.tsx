@@ -476,13 +476,23 @@ function AccountSettings({ s: _s, reload }: { s: any; reload: () => void }) {
     }
   };
 
-  const startTotp = () => securityAction('totp-start', async () => {
-    const setup = await api.startTotpSetup(securityPassword);
-    const qr = await QRCode.toDataURL(setup.uri, { width: 220, margin: 1 });
-    setTotpSetup({ ...setup, qr });
-    setFactorCode('');
-    setRecoveryCodes([]);
-  });
+  const requireSecurityPassword = (): boolean => {
+    if (securityPassword) return true;
+    setSecurityErr('Enter your current password first.');
+    setSecurityMsg('');
+    return false;
+  };
+
+  const startTotp = () => {
+    if (!requireSecurityPassword()) return;
+    void securityAction('totp-start', async () => {
+      const setup = await api.startTotpSetup(securityPassword);
+      const qr = await QRCode.toDataURL(setup.uri, { width: 220, margin: 1 });
+      setTotpSetup({ ...setup, qr });
+      setFactorCode('');
+      setRecoveryCodes([]);
+    });
+  };
 
   const verifyTotp = () => securityAction('totp-verify', async () => {
     if (!totpSetup) return;
@@ -508,19 +518,28 @@ function AccountSettings({ s: _s, reload }: { s: any; reload: () => void }) {
     setSecurityMsg('New recovery codes generated. Older codes no longer work.');
   });
 
-  const addPasskey = () => securityAction('passkey-add', async () => {
-    if (!window.isSecureContext || typeof window.PublicKeyCredential === 'undefined') {
-      throw new Error('Passkeys require HTTPS or localhost in a supported browser');
+  const addPasskey = () => {
+    if (!requireSecurityPassword()) return;
+    const name = passkeyName.trim();
+    if (!name) {
+      setSecurityErr('Enter a name for this Passkey, for example “MacBook” or “iPhone”.');
+      setSecurityMsg('');
+      return;
     }
-    const { ceremonyId, options } = await api.passkeyRegistrationOptions(
-      securityPassword,
-      passkeyName || 'My Passkey',
-    );
-    const response = await startRegistration({ optionsJSON: options });
-    await api.passkeyRegistrationVerify(ceremonyId, response);
-    setPasskeyName('');
-    setSecurityMsg('Passkey added.');
-  });
+    void securityAction('passkey-add', async () => {
+      if (!window.isSecureContext || typeof window.PublicKeyCredential === 'undefined') {
+        throw new Error('Passkeys require HTTPS or localhost in a supported browser');
+      }
+      const { ceremonyId, options } = await api.passkeyRegistrationOptions(
+        securityPassword,
+        name,
+      );
+      const response = await startRegistration({ optionsJSON: options });
+      await api.passkeyRegistrationVerify(ceremonyId, response);
+      setPasskeyName('');
+      setSecurityMsg('Passkey added.');
+    });
+  };
 
   const removePasskey = (id: string, name: string) => securityAction(`passkey-${id}`, async () => {
     if (!window.confirm(`Remove Passkey “${name}”?`)) return;
@@ -590,10 +609,15 @@ function AccountSettings({ s: _s, reload }: { s: any; reload: () => void }) {
           type="password"
           style={{ width: 240 }}
           value={securityPassword}
-          onChange={(e) => setSecurityPassword(e.target.value)}
+          onChange={(e) => {
+            setSecurityPassword(e.target.value);
+            if (securityErr) setSecurityErr('');
+          }}
           autoComplete="current-password"
         />
       </Row>
+      {securityErr && <div className="security-error" role="alert">{securityErr}</div>}
+      {securityMsg && <div className="security-success" role="status">{securityMsg}</div>}
 
       <div className="security-card">
         <div className="security-card-head">
@@ -609,7 +633,7 @@ function AccountSettings({ s: _s, reload }: { s: any; reload: () => void }) {
             <button
               className="btn"
               onClick={startTotp}
-              disabled={Boolean(securityBusy) || !securityPassword}
+              disabled={Boolean(securityBusy)}
             >
               {securityBusy === 'totp-start' ? 'Starting…' : 'Set up'}
             </button>
@@ -702,12 +726,15 @@ function AccountSettings({ s: _s, reload }: { s: any; reload: () => void }) {
             placeholder="Name, e.g. MacBook or iPhone"
             maxLength={64}
             value={passkeyName}
-            onChange={(e) => setPasskeyName(e.target.value)}
+            onChange={(e) => {
+              setPasskeyName(e.target.value);
+              if (securityErr) setSecurityErr('');
+            }}
           />
           <button
             className="btn"
             onClick={addPasskey}
-            disabled={Boolean(securityBusy) || !securityPassword || !passkeyName.trim()}
+            disabled={Boolean(securityBusy)}
           >
             {securityBusy === 'passkey-add' ? 'Waiting for device…' : 'Add Passkey'}
           </button>
@@ -738,8 +765,6 @@ function AccountSettings({ s: _s, reload }: { s: any; reload: () => void }) {
         </p>
       </div>
 
-      {securityErr && <div className="security-error">{securityErr}</div>}
-      {securityMsg && <div className="security-success">{securityMsg}</div>}
     </div>
   );
 }

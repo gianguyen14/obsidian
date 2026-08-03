@@ -931,7 +931,8 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 .setting-row .control { flex-shrink: 0; }
 .btn { background: var(--interactive-accent); color: var(--text-on-accent); border: 0; padding: 7px 14px;
   border-radius: var(--radius); cursor: pointer; font-size: 13px; }
-.btn:hover { background: var(--interactive-accent-hover); }
+.btn:hover:not(:disabled) { background: var(--interactive-accent-hover); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn.secondary { background: var(--bg-modifier-active); color: var(--text-normal); }
 .btn.danger { background: #d6453d; color: #fff; }
 
