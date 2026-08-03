@@ -1766,6 +1766,82 @@ video.media-embed {
 }
 audio.media-embed { display: block; width: min(100%, 480px); max-width: 100%; margin: 6px 0; }
 .cm-media-wrap .cm-embed-missing { line-height: normal; }
+
+/* ---- Native Excalidraw editor + Markdown embeds ---- */
+.excalidraw-view {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--background-primary);
+}
+.excalidraw-loading,
+.excalidraw-error {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+}
+.excalidraw-error { flex-direction: column; text-align: center; padding: 24px; }
+.excalidraw-error strong { color: var(--text-normal); }
+.wo-excalidraw-actions { display: flex; gap: 6px; }
+.wo-excalidraw-actions button {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--default-border-color);
+  border-radius: 8px;
+  background: var(--island-bg-color);
+  color: var(--text-primary-color);
+  cursor: pointer;
+}
+.wo-excalidraw-actions button:hover { background: var(--button-hover-bg); }
+.excalidraw-embed,
+.cm-excalidraw-embed {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  margin: 12px auto;
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary-alt);
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: center;
+}
+.excalidraw-embed:hover,
+.cm-excalidraw-embed:hover { border-color: var(--interactive-accent); }
+.excalidraw-embed svg,
+.cm-excalidraw-embed svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 70vh;
+  margin: auto;
+}
+.excalidraw-embed.is-missing,
+.cm-excalidraw-embed.is-missing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 80px;
+  color: var(--text-error);
+}
+@media (max-width: 700px) {
+  .wo-excalidraw-actions button span { display: none; }
+  .wo-excalidraw-actions button { width: 32px; padding: 0; justify-content: center; }
+}
 /* Direct file view (opening a media file straight from the tree). */
 .preview-inner video.media-fileview { max-height: 80vh; }
 .preview-inner audio.media-fileview { width: min(100%, 520px); }

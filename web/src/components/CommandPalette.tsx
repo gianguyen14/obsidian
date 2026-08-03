@@ -40,6 +40,7 @@ export default function CommandPalette() {
   const openDailyNote = useStore((s) => s.openDailyNote);
   const newNote = useStore((s) => s.newNote);
   const newCanvas = useStore((s) => s.newCanvas);
+  const newDrawing = useStore((s) => s.newDrawing);
   const notify = useStore((s) => s.notify);
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(0);
@@ -49,6 +50,7 @@ export default function CommandPalette() {
   const commands: Cmd[] = useMemo(
     () => [
       { id: 'new', title: 'New note', hint: '⌘N', run: () => newNote() },
+      { id: 'new-drawing', title: 'New drawing', run: () => newDrawing() },
       { id: 'new-canvas', title: 'New canvas', run: () => newCanvas() },
       { id: 'daily', title: 'Open today’s daily note', run: () => openDailyNote() },
       { id: 'save', title: 'Save current file', hint: '⌘S', run: () => save() },
@@ -72,7 +74,7 @@ export default function CommandPalette() {
           }
         } },
     ],
-    [save, setLeftPanel, setGraph, setSettings, setTrash, setViewMode, activePath, toggleBookmark, openToSide, openDailyNote, newNote, newCanvas, notify],
+    [save, setLeftPanel, setGraph, setSettings, setTrash, setViewMode, activePath, toggleBookmark, openToSide, openDailyNote, newNote, newDrawing, newCanvas, notify],
   );
 
   const items = useMemo(() => {

@@ -40,7 +40,7 @@ async function fileStat(abs: string, rel: string): Promise<{ m: number; c: numbe
 }
 
 const TEXT_EXTS = new Set([
-  '.md', '.markdown', '.txt', '.json', '.csv', '.canvas', '.css', '.js', '.yml', '.yaml',
+  '.md', '.markdown', '.txt', '.json', '.csv', '.canvas', '.excalidraw', '.css', '.js', '.yml', '.yaml',
 ]);
 
 const IGNORED = new Set(['.git', 'node_modules']);

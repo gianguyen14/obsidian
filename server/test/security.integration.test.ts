@@ -183,6 +183,26 @@ test('security-sensitive setup, session and vault boundaries', async () => {
     headers: { Cookie: oldCookie },
     body: JSON.stringify({ path: 'shared.md', content: '# Shared' }),
   })).status, 200);
+
+  const drawing = JSON.stringify({
+    type: 'excalidraw',
+    version: 2,
+    source: 'webobsidian',
+    elements: [],
+    appState: { viewBackgroundColor: '#ffffff' },
+    files: {},
+  });
+  assert.equal((await jsonRequest(base, '/api/files/content', {
+    method: 'PUT',
+    headers: { Cookie: oldCookie },
+    body: JSON.stringify({ path: 'Drawing.excalidraw', content: drawing }),
+  })).status, 200);
+  const drawingRead = await jsonRequest(base, '/api/files/content?path=Drawing.excalidraw', {
+    headers: { Cookie: oldCookie },
+  });
+  assert.equal(drawingRead.status, 200);
+  assert.equal((await drawingRead.json() as { content: string }).content, drawing);
+
   const shareResponse = await jsonRequest(base, '/api/shares', {
     method: 'POST',
     headers: { Cookie: oldCookie },

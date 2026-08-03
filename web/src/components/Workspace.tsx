@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { useStore, GRAPH_PATH, type ContextMenuItem } from '../lib/store';
 import { api } from '../lib/api';
 import Editor from './Editor';
@@ -15,17 +16,27 @@ import { triggerAddProperty } from '../lib/livePreview';
 import { pathToUrl } from '../lib/urlsync';
 import { VIDEO_EXT_RE, AUDIO_EXT_RE } from '../lib/media';
 
+const ExcalidrawView = lazy(() => import('./ExcalidrawView'));
+
 function EditorPane() {
   const activePath = useStore((s) => s.activePath);
   const viewMode = useStore((s) => s.viewMode);
   const isMd = activePath ? /\.(md|markdown)$/i.test(activePath) : false;
   const isImage = activePath ? /\.(png|jpe?g|gif|svg|webp)$/i.test(activePath) : false;
   const isCanvas = activePath ? /\.canvas$/i.test(activePath) : false;
+  const isExcalidraw = activePath ? /\.excalidraw$/i.test(activePath) : false;
   const isVideo = activePath ? VIDEO_EXT_RE.test(activePath) : false;
   const isAudio = activePath ? AUDIO_EXT_RE.test(activePath) : false;
 
   if (activePath && isCanvas) {
     return <CanvasView />;
+  }
+  if (activePath && isExcalidraw) {
+    return (
+      <Suspense fallback={<div className="excalidraw-loading">Loading Excalidraw…</div>}>
+        <ExcalidrawView key={activePath} />
+      </Suspense>
+    );
   }
   if (activePath && isImage) {
     return (
@@ -95,6 +106,7 @@ export default function Workspace() {
   const canGoForward = histIndex < historyLen - 1;
 
   const isMd = activePath ? /\.(md|markdown)$/i.test(activePath) : false;
+  const isExcalidraw = activePath ? /\.excalidraw$/i.test(activePath) : false;
   const isShareable = activePath ? /\.(md|markdown|canvas)$/i.test(activePath) : false;
   const canSplit = activePath ? /\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i.test(activePath) : false;
 
@@ -192,6 +204,12 @@ export default function Workspace() {
         moveItem,
         copyItem,
         { label: bookmarks.includes(path) ? 'Remove bookmark' : 'Bookmark', icon: 'bookmark', onClick: () => toggleBookmark(path) },
+        ...(isExcalidraw
+          ? [
+              { label: 'Export as PNG…', icon: 'image', onClick: () => window.dispatchEvent(new CustomEvent('wo-excalidraw-export', { detail: 'png' })) },
+              { label: 'Export as SVG…', icon: 'file', onClick: () => window.dispatchEvent(new CustomEvent('wo-excalidraw-export', { detail: 'svg' })) },
+            ]
+          : []),
         ...(isMd ? [{ label: 'Add file property', icon: 'plus', onClick: addFileProperty }] : []),
         ...(isMd ? [{ label: 'Export to PDF…', icon: 'file-pdf', onClick: exportToPdf }] : []),
         ...(canSplit
@@ -308,7 +326,7 @@ export default function Workspace() {
               {t.path === GRAPH_PATH && (
                 <Icon name="graph" size={13} style={{ marginRight: 4, flexShrink: 0 }} />
               )}
-              <span className="title">{t.title.replace(/\.(md|markdown)$/, '')}</span>
+              <span className="title">{t.title.replace(/\.(md|markdown|excalidraw)$/, '')}</span>
               {dirty && activePath === t.path ? (
                 <span className="dot">●</span>
               ) : (
@@ -357,7 +375,7 @@ export default function Workspace() {
               : activePath.split('/').map((seg, i) => (
                   <span key={i}>
                     {i > 0 && <span className="sep">/</span>}
-                    {seg.replace(/\.(md|markdown)$/, '')}
+                    {seg.replace(/\.(md|markdown|excalidraw)$/, '')}
                   </span>
                 ))}
           </span>

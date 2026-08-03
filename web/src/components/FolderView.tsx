@@ -7,6 +7,7 @@ function entryIcon(n: TreeNode): string {
   if (n.type === 'folder') return 'folder';
   const ext = n.ext ?? '';
   if (/\.(md|markdown)$/i.test(ext)) return 'file-text';
+  if (/\.excalidraw$/i.test(ext)) return 'pencil';
   if (/\.(png|jpe?g|gif|svg|webp)$/i.test(ext)) return 'image';
   if (ext === '.pdf') return 'file-pdf';
   return 'paperclip';
@@ -29,7 +30,7 @@ export default function FolderView({ path }: { path: string }) {
   const ordered = [...folders, ...files].sort((a, b) =>
     a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1,
   );
-  const label = (n: TreeNode) => (n.type === 'file' ? n.name.replace(/\.(md|markdown)$/, '') : n.name);
+  const label = (n: TreeNode) => (n.type === 'file' ? n.name.replace(/\.(md|markdown|excalidraw)$/, '') : n.name);
 
   return (
     <div className="markdown-preview">

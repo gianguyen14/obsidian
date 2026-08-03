@@ -6,6 +6,7 @@ import { useStore } from '../lib/store';
 import { renderMarkdown } from '../lib/markdown';
 import { calloutIconSvg } from '../lib/callouts';
 import { openLightbox } from '../lib/imageLightbox';
+import { hydrateExcalidrawEmbeds } from '../lib/excalidraw';
 import { api } from '../lib/api';
 
 /** Syntax-highlight a `<code class="language-x">` block with the SAME CodeMirror
@@ -182,10 +183,12 @@ export default function Preview({ source }: { source?: string }) {
         }
       });
     }
+    const cleanupExcalidraw = hydrateExcalidrawEmbeds(root, openWikilink);
     return () => {
       cancelled = true;
+      cleanupExcalidraw();
     };
-  }, [html]);
+  }, [html, openWikilink]);
 
   const onClick = (e: React.MouseEvent) => {
     // Click an embedded image → full-screen zoom/pan viewer.

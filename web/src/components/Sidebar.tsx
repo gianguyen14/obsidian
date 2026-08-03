@@ -17,6 +17,7 @@ export default function Sidebar() {
   const leftPanel = useStore((s) => s.leftPanel);
   const newNote = useStore((s) => s.newNote);
   const newCanvas = useStore((s) => s.newCanvas);
+  const newDrawing = useStore((s) => s.newDrawing);
   const newFolder = useStore((s) => s.newFolder);
   const setSettings = useStore((s) => s.setSettings);
   const setTrash = useStore((s) => s.setTrash);
@@ -93,6 +94,9 @@ export default function Sidebar() {
           <>
             <button className="nav-action" title="New note" onClick={() => newNote()}>
               <Icon name="square-pen" size={16} />
+            </button>
+            <button className="nav-action" title="New drawing" onClick={() => newDrawing()}>
+              <Icon name="pencil" size={16} />
             </button>
             <button className="nav-action" title="New canvas" onClick={() => newCanvas()}>
               <Icon name="layout-dashboard" size={16} />
