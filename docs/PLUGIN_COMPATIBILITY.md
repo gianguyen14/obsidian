@@ -14,11 +14,15 @@ optional `styles.css`, and `data.json` layout as Obsidian.
 - Workspace: active file, file-open events, leaves, custom `ItemView` registration, and
   extension-to-view registration.
 - UI: commands/default hotkeys, ribbon buttons, status-bar items, modal/notice/menu,
-  settings tabs, `Setting` and common input components.
+  settings tabs, `Setting`, input suggestions, setting groups/pages, and common input
+  components.
 - Markdown Reading view: post-processors and fenced code-block processors.
 - Plugin state in `.obsidian/plugins/<id>/data.json`.
-- Common helpers: `moment`, YAML, path/link/frontmatter/tag utilities, icons, and the
-  Obsidian DOM helper methods used by plugin UIs.
+- Plugin-scoped local storage and public Bases view registration.
+- Common helpers: `moment`, YAML, path/link/frontmatter/tag/search/language/PDF utilities,
+  icons, and the Obsidian DOM helper methods used by plugin UIs.
+- Browser modules commonly externalized by plugin bundles: CodeMirror 6, Lezer, React,
+  and the Ajv validation runtimes.
 
 ## Partial support
 
@@ -26,6 +30,8 @@ optional `styles.css`, and `data.json` layout as Obsidian.
   byte-for-byte implementation of Obsidian's internal cache.
 - Editor command callbacks receive a CodeMirror-backed editor adapter. Direct CM6
   extension registration and `EditorSuggest` are reported as partial compatibility.
+- Bases view registrations are accepted so plugins can initialize, but WebObsidian does
+  not yet provide Obsidian's complete `.base` query engine or custom Bases view host.
 - Markdown post-processors run in Reading view. Live Preview remains WebObsidian's own
   CodeMirror renderer.
 - `requestUrl()` uses browser `fetch`; the destination must allow CORS.
@@ -54,3 +60,11 @@ and Obsidian Git plugins are unnecessary here.
 
 Community plugins are trusted code. As in desktop Obsidian, only install plugins whose
 publisher and source you trust: a loaded plugin can read and modify the vault.
+
+## Verified plugin releases
+
+The compatibility regression suite evaluates and runs `onload()` from the published
+bundles for Breadcrumbs 4.21.9, Notebook Navigator 3.3.0, TaskNotes 4.11.1, and
+Excalidraw 2.25.3. Passing this check means the plugin starts without a missing class,
+helper, or external-module failure; individual features may still fall into the partial
+or unsupported categories above.

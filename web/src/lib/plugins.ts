@@ -7,6 +7,19 @@
  */
 import moment from 'moment';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import * as CodeMirrorAutocomplete from '@codemirror/autocomplete';
+import * as CodeMirrorCommands from '@codemirror/commands';
+import * as CodeMirrorLanguage from '@codemirror/language';
+import * as CodeMirrorState from '@codemirror/state';
+import * as CodeMirrorView from '@codemirror/view';
+import * as LezerLR from '@lezer/lr';
+import * as ReactModule from 'react';
+import * as AjvFormats from 'ajv-formats/dist/formats.js';
+import AjvEqual from 'ajv/dist/runtime/equal.js';
+import AjvUcs2Length from 'ajv/dist/runtime/ucs2length.js';
+import AjvUri from 'ajv/dist/runtime/uri.js';
+import AjvValidationError from 'ajv/dist/runtime/validation_error.js';
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import { api, type TreeNode } from './api';
 import { useStore } from './store';
 import { getActiveEditor } from './activeEditor';
@@ -116,8 +129,59 @@ let domHelpersInstalled = false;
 function installDomHelpers(): void {
   if (domHelpersInstalled) return;
   domHelpersInstalled = true;
-  const proto = HTMLElement.prototype as any;
-  const svgProto = SVGElement.prototype as any;
+  const nodeProto = Node.prototype as any;
+  const elementProto = Element.prototype as any;
+  const htmlProto = HTMLElement.prototype as any;
+  const eventProto = Event.prototype as any;
+  const define = (target: object, name: string, value: AnyFn | PropertyDescriptor) => {
+    if (name in target) return;
+    Object.defineProperty(
+      target,
+      name,
+      typeof value === 'function' ? { value, configurable: true } : { ...value, configurable: true },
+    );
+  };
+
+  const activeWindow = window as any;
+  activeWindow.activeWindow = window;
+  activeWindow.activeDocument = document;
+  activeWindow.sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+  activeWindow.nextFrame = () => new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
+  (globalThis as any).activeWindow = window;
+  (globalThis as any).activeDocument = document;
+  (globalThis as any).sleep = activeWindow.sleep;
+  (globalThis as any).nextFrame = activeWindow.nextFrame;
+  (globalThis as any).app = sharedApp;
+
+  define(Object, 'isEmpty', (value: Record<string, unknown>) => !value || Object.keys(value).length === 0);
+  define(Object, 'each', (value: Record<string, unknown>, callback: AnyFn, context?: unknown) => {
+    for (const [key, item] of Object.entries(value ?? {})) if (callback.call(context, item, key) === false) return false;
+    return true;
+  });
+  define(Array, 'combine', (arrays: unknown[][]) => arrays.flat());
+  define(Array.prototype, 'first', function (this: unknown[]) { return this[0]; });
+  define(Array.prototype, 'last', function (this: unknown[]) { return this[this.length - 1]; });
+  define(Array.prototype, 'contains', function (this: unknown[], value: unknown) { return this.includes(value); });
+  define(Array.prototype, 'remove', function (this: unknown[], value: unknown) {
+    const index = this.indexOf(value);
+    if (index >= 0) this.splice(index, 1);
+  });
+  define(Array.prototype, 'shuffle', function (this: unknown[]) {
+    for (let index = this.length - 1; index > 0; index -= 1) {
+      const swap = Math.floor(Math.random() * (index + 1));
+      [this[index], this[swap]] = [this[swap], this[index]];
+    }
+    return this;
+  });
+  define(Array.prototype, 'unique', function (this: unknown[]) { return [...new Set(this)]; });
+  define(Math, 'clamp', (value: number, min: number, max: number) => Math.min(max, Math.max(min, value)));
+  define(Math, 'square', (value: number) => value * value);
+  define(String, 'isString', (value: unknown) => typeof value === 'string');
+  define(String.prototype, 'contains', function (this: string, value: string) { return this.includes(value); });
+  define(String.prototype, 'format', function (this: string, ...args: string[]) {
+    return this.replace(/\{(\d+)\}/g, (match, index) => args[Number(index)] ?? match);
+  });
+  define(Number, 'isNumber', (value: unknown) => typeof value === 'number');
 
   const create = function (this: HTMLElement, tag: string, options?: any): HTMLElement {
     const el = document.createElement(tag);
@@ -131,27 +195,88 @@ function installDomHelpers(): void {
     this.appendChild(el);
     return el;
   };
-  const methods: Record<string, AnyFn> = {
-    createEl: create,
-    createDiv(this: HTMLElement, options?: any) { return create.call(this, 'div', options); },
-    createSpan(this: HTMLElement, options?: any) { return create.call(this, 'span', options); },
-    createSvg,
-    empty(this: Element) { this.replaceChildren(); return this; },
-    setText(this: Element, text: unknown) { this.textContent = String(text ?? ''); return this; },
-    addClass(this: Element, ...classes: string[]) { this.classList.add(...classes.flatMap(splitClasses)); return this; },
-    removeClass(this: Element, ...classes: string[]) { this.classList.remove(...classes.flatMap(splitClasses)); return this; },
-    toggleClass(this: Element, cls: string, value?: boolean) { this.classList.toggle(cls, value); return this; },
-    hasClass(this: Element, cls: string) { return this.classList.contains(cls); },
-    show(this: HTMLElement) { this.style.display = ''; return this; },
-    hide(this: HTMLElement) { this.style.display = 'none'; return this; },
-    detach(this: Element) { this.remove(); return this; },
-    setAttr(this: Element, name: string, value: unknown) { this.setAttribute(name, String(value)); return this; },
-    getAttr(this: Element, name: string) { return this.getAttribute(name); },
-  };
-  for (const [name, fn] of Object.entries(methods)) {
-    if (!proto[name]) Object.defineProperty(proto, name, { value: fn, configurable: true });
-    if (!svgProto[name]) Object.defineProperty(svgProto, name, { value: fn, configurable: true });
-  }
+
+  define(nodeProto, 'detach', function (this: Node) { this.parentNode?.removeChild(this); });
+  define(nodeProto, 'empty', function (this: Node) { while (this.firstChild) this.removeChild(this.firstChild); });
+  define(nodeProto, 'insertAfter', function <T extends Node>(this: Node, node: T, child: Node | null) {
+    return this.insertBefore(node, child?.nextSibling ?? this.firstChild);
+  });
+  define(nodeProto, 'indexOf', function (this: Node, other: Node) { return [...this.childNodes].indexOf(other as ChildNode); });
+  define(nodeProto, 'setChildrenInPlace', function (this: Node, children: Node[]) {
+    while (this.firstChild) this.removeChild(this.firstChild);
+    children.forEach((child) => this.appendChild(child));
+  });
+  define(nodeProto, 'appendText', function (this: Node, value: string) { this.appendChild(document.createTextNode(value)); });
+  define(nodeProto, 'instanceOf', function (this: Node, type: AnyFn) {
+    const targetWindow = (this.ownerDocument?.defaultView ?? window) as any;
+    return this instanceof type || Boolean(targetWindow?.[type?.name] && this instanceof targetWindow[type.name]);
+  });
+  define(nodeProto, 'doc', { get(this: Node) { return this.ownerDocument ?? document; } });
+  define(nodeProto, 'win', { get(this: Node) { return this.ownerDocument?.defaultView ?? window; } });
+  define(nodeProto, 'constructorWin', { get(this: Node) { return this.ownerDocument?.defaultView ?? window; } });
+
+  define(elementProto, 'getText', function (this: Element) { return this.textContent ?? ''; });
+  define(elementProto, 'setText', function (this: Element, text: unknown) {
+    if (text instanceof DocumentFragment) this.replaceChildren(text);
+    else this.textContent = String(text ?? '');
+    return this;
+  });
+  define(elementProto, 'addClass', function (this: Element, ...classes: string[]) { this.classList.add(...classes.flatMap(splitClasses)); return this; });
+  define(elementProto, 'addClasses', function (this: Element, classes: string[]) { this.classList.add(...classes.flatMap(splitClasses)); return this; });
+  define(elementProto, 'removeClass', function (this: Element, ...classes: string[]) { this.classList.remove(...classes.flatMap(splitClasses)); return this; });
+  define(elementProto, 'removeClasses', function (this: Element, classes: string[]) { this.classList.remove(...classes.flatMap(splitClasses)); return this; });
+  define(elementProto, 'toggleClass', function (this: Element, classes: string | string[], value?: boolean) {
+    const names = Array.isArray(classes) ? classes : splitClasses(classes);
+    names.forEach((name) => this.classList.toggle(name, value));
+    return this;
+  });
+  define(elementProto, 'hasClass', function (this: Element, cls: string) { return this.classList.contains(cls); });
+  define(elementProto, 'setAttr', function (this: Element, name: string, value: unknown) {
+    if (value === null) this.removeAttribute(name); else this.setAttribute(name, String(value));
+    return this;
+  });
+  define(elementProto, 'setAttrs', function (this: Element, attrs: Record<string, unknown>) {
+    Object.entries(attrs).forEach(([name, value]) => {
+      if (value === null) this.removeAttribute(name); else this.setAttribute(name, String(value));
+    });
+    return this;
+  });
+  define(elementProto, 'getAttr', function (this: Element, name: string) { return this.getAttribute(name); });
+  define(elementProto, 'matchParent', function (this: Element, selector: string, lastParent?: Element) {
+    let current: Element | null = this;
+    while (current && current !== lastParent) {
+      if (current.matches(selector)) return current;
+      current = current.parentElement;
+    }
+    return null;
+  });
+  define(elementProto, 'getCssPropertyValue', function (this: Element, property: string, pseudo?: string) {
+    return getComputedStyle(this, pseudo || null).getPropertyValue(property);
+  });
+  define(elementProto, 'isActiveElement', function (this: Element) { return this.ownerDocument.activeElement === this; });
+
+  define(htmlProto, 'createEl', create);
+  define(htmlProto, 'createDiv', function (this: HTMLElement, options?: any) { return create.call(this, 'div', options); });
+  define(htmlProto, 'createSpan', function (this: HTMLElement, options?: any) { return create.call(this, 'span', options); });
+  define(htmlProto, 'createSvg', createSvg);
+  define(htmlProto, 'show', function (this: HTMLElement) { this.style.display = ''; return this; });
+  define(htmlProto, 'hide', function (this: HTMLElement) { this.style.display = 'none'; return this; });
+  define(htmlProto, 'toggle', function (this: HTMLElement, show: boolean) { this.style.display = show ? '' : 'none'; return this; });
+  define(htmlProto, 'toggleVisibility', function (this: HTMLElement, visible: boolean) { this.style.visibility = visible ? '' : 'hidden'; return this; });
+  define(htmlProto, 'isShown', function (this: HTMLElement) { return this.isConnected && getComputedStyle(this).display !== 'none'; });
+  define(htmlProto, 'setCssStyles', function (this: HTMLElement, styles: Partial<CSSStyleDeclaration>) { Object.assign(this.style, styles); return this; });
+  define(htmlProto, 'setCssProps', function (this: HTMLElement, props: Record<string, string>) { Object.entries(props).forEach(([name, value]) => this.style.setProperty(name, value)); return this; });
+  define(htmlProto, 'innerWidth', { get(this: HTMLElement) { const style = getComputedStyle(this); return this.clientWidth - Number.parseFloat(style.paddingLeft || '0') - Number.parseFloat(style.paddingRight || '0'); } });
+  define(htmlProto, 'onWindowMigrated', function () { return () => {}; });
+  define(htmlProto, 'trigger', function (this: HTMLElement, type: string) { this.dispatchEvent(new Event(type, { bubbles: true })); });
+
+  define(eventProto, 'targetNode', { get(this: Event) { return this.target instanceof Node ? this.target : null; } });
+  define(eventProto, 'doc', { get(this: Event) { return (this.target as Node | null)?.ownerDocument ?? document; } });
+  define(eventProto, 'win', { get(this: Event) { return (this.target as Node | null)?.ownerDocument?.defaultView ?? window; } });
+  define(eventProto, 'instanceOf', function (this: Event, type: AnyFn) {
+    const targetWindow = ((this.target as Node | null)?.ownerDocument?.defaultView ?? window) as any;
+    return this instanceof type || Boolean(targetWindow?.[type?.name] && this instanceof targetWindow[type.name]);
+  });
 }
 
 function splitClasses(value: string): string[] {
@@ -185,6 +310,12 @@ function setNodeContent(el: HTMLElement, value: string | Node): void {
 // ---- Events + component lifecycle ----------------------------------------
 
 export interface EventRef { off: () => void }
+
+export class BaseComponent {
+  disabled = false;
+  then(callback: (component: this) => any): this { callback(this); return this; }
+  setDisabled(disabled: boolean): this { this.disabled = disabled; return this; }
+}
 
 export class Events {
   private handlers = new Map<string, Set<{ callback: AnyFn; ctx?: unknown }>>();
@@ -414,6 +545,17 @@ class VaultAdapter {
   async copy(from: string, to: string): Promise<void> { await api.copy(from, to); }
 }
 
+/**
+ * Type marker used by plugins before calling desktop-only filesystem helpers.
+ * WebObsidian's vault adapter deliberately does not extend this class, so a
+ * well-behaved plugin will keep "reveal in explorer" actions disabled.
+ */
+export class FileSystemAdapter {
+  getName(): string { return 'WebObsidian'; }
+  getBasePath(): string { throw new Error('Local filesystem paths are unavailable in WebObsidian'); }
+  getFullPath(_path: string): string { throw new Error('Local filesystem paths are unavailable in WebObsidian'); }
+}
+
 export class MetadataCache extends Events {
   resolvedLinks: Record<string, Record<string, number>> = {};
   unresolvedLinks: Record<string, Record<string, number>> = {};
@@ -444,6 +586,19 @@ function getFileCacheFromText(_file: TFile, data: string): any {
 
 // ---- Editor + workspace views --------------------------------------------
 
+export const editorLivePreviewField = CodeMirrorState.StateField.define<boolean>({
+  create: () => true,
+  update: (value) => value,
+});
+export const editorInfoField = CodeMirrorState.StateField.define<any>({
+  create: () => ({ app: sharedApp, editor: new Editor(), file: sharedApp.workspace.getActiveFile() }),
+  update: (value) => value,
+});
+export const editorEditorField = CodeMirrorState.StateField.define<any>({
+  create: () => getActiveEditor(),
+  update: (value) => value,
+});
+
 export class Editor {
   private view() { return getActiveEditor(); }
   getValue(): string { return this.view()?.state.doc.toString() ?? ''; }
@@ -469,9 +624,18 @@ export class Editor {
   somethingSelected(): boolean { const selection = this.view()?.state.selection.main; return Boolean(selection && !selection.empty); }
 }
 
-export class WorkspaceLeaf extends Events {
+export class WorkspaceItem extends Events {
+  getRoot(): WorkspaceItem { return this; }
+}
+export class WorkspaceParent extends WorkspaceItem {}
+export class WorkspaceSplit extends WorkspaceParent {
+  parent: WorkspaceParent | null = null;
+}
+
+export class WorkspaceLeaf extends WorkspaceItem {
   readonly id = contributionId('workspace', 'leaf');
   view: View;
+  parent: WorkspaceParent | null = null;
   private state: any = { type: 'empty', state: {} };
   constructor() { super(); this.view = new EmptyView(this); }
   async openFile(file: TFile): Promise<void> { await useStore.getState().openFile(file.path); }
@@ -673,6 +837,115 @@ export class Modal {
   onClose(): void {}
 }
 
+export abstract class PopoverSuggest<T> {
+  scope = new Scope();
+  suggestEl = document.createElement('div');
+  protected values: T[] = [];
+  protected selectedIndex = 0;
+  constructor(public app: App) {
+    this.suggestEl.className = 'suggestion-container plugin-suggestion-container';
+  }
+  abstract renderSuggestion(value: T, el: HTMLElement): void;
+  abstract selectSuggestion(value: T, evt: MouseEvent | KeyboardEvent): void;
+  open(): void {
+    if (!this.suggestEl.isConnected) document.body.appendChild(this.suggestEl);
+    this.scope.activate();
+  }
+  close(): void {
+    this.scope.deactivate();
+    this.suggestEl.remove();
+  }
+  protected renderValues(): void {
+    this.suggestEl.replaceChildren();
+    this.values.forEach((value, index) => {
+      const row = document.createElement('div');
+      row.className = 'suggestion-item';
+      row.classList.toggle('is-selected', index === this.selectedIndex);
+      this.renderSuggestion(value, row);
+      row.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        this.selectedIndex = index;
+        this.selectSuggestion(value, event);
+        this.close();
+      });
+      this.suggestEl.appendChild(row);
+    });
+  }
+}
+
+export abstract class AbstractInputSuggest<T> extends PopoverSuggest<T> {
+  limit = 100;
+  private selectCallback?: (value: T, evt: MouseEvent | KeyboardEvent) => any;
+  private inputListener = () => void this.refresh();
+  private focusListener = () => void this.refresh();
+  private outsideListener = (event: MouseEvent) => {
+    if (event.target !== this.textInputEl && !this.suggestEl.contains(event.target as Node)) this.close();
+  };
+  private keyListener = (event: KeyboardEvent) => {
+    if (!this.values.length) return;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const delta = event.key === 'ArrowDown' ? 1 : -1;
+      this.selectedIndex = (this.selectedIndex + delta + this.values.length) % this.values.length;
+      this.renderValues();
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const value = this.values[this.selectedIndex];
+      if (value !== undefined) this.selectSuggestion(value, event);
+      this.close();
+    } else if (event.key === 'Escape') {
+      this.close();
+    }
+  };
+
+  constructor(app: App, public textInputEl: HTMLInputElement | HTMLDivElement) {
+    super(app);
+    textInputEl.addEventListener('input', this.inputListener);
+    textInputEl.addEventListener('focus', this.focusListener);
+    textInputEl.addEventListener('keydown', this.keyListener as EventListener);
+    document.addEventListener('mousedown', this.outsideListener, true);
+  }
+  setValue(value: string): void {
+    if (this.textInputEl instanceof HTMLInputElement) this.textInputEl.value = value;
+    else this.textInputEl.textContent = value;
+  }
+  getValue(): string { return this.textInputEl instanceof HTMLInputElement ? this.textInputEl.value : this.textInputEl.textContent ?? ''; }
+  protected abstract getSuggestions(query: string): T[] | Promise<T[]>;
+  renderSuggestion(value: T, el: HTMLElement): void { el.textContent = String(value); }
+  selectSuggestion(value: T, evt: MouseEvent | KeyboardEvent): void {
+    this.setValue(String(value));
+    this.selectCallback?.(value, evt);
+  }
+  onSelect(callback: (value: T, evt: MouseEvent | KeyboardEvent) => any): this { this.selectCallback = callback; return this; }
+  override open(): void { super.open(); this.position(); }
+  override close(): void { super.close(); }
+  private position(): void {
+    const rect = this.textInputEl.getBoundingClientRect();
+    this.suggestEl.style.position = 'fixed';
+    this.suggestEl.style.left = `${rect.left}px`;
+    this.suggestEl.style.top = `${rect.bottom + 4}px`;
+    this.suggestEl.style.minWidth = `${Math.max(rect.width, 180)}px`;
+    this.suggestEl.style.zIndex = '10000';
+  }
+  private async refresh(): Promise<void> {
+    const values = await this.getSuggestions(this.getValue());
+    this.values = values.slice(0, this.limit || values.length);
+    this.selectedIndex = 0;
+    if (!this.values.length) { this.close(); return; }
+    this.open();
+    this.renderValues();
+  }
+}
+
+export abstract class EditorSuggest<T> extends PopoverSuggest<T> {
+  context: any = null;
+  limit = 100;
+  constructor(app: App) { super(app); }
+  setInstructions(_instructions: any[]): void {}
+  abstract onTrigger(cursor: any, editor: Editor, file: TFile | null): any;
+  abstract getSuggestions(context: any): T[] | Promise<T[]>;
+}
+
 export class SuggestModal<T> extends Modal {
   inputEl = document.createElement('input');
   resultContainerEl = document.createElement('div');
@@ -751,11 +1024,8 @@ export class Menu {
   hide(): this { useStore.getState().closeContextMenu(); return this; }
 }
 
-abstract class ValueComponent<T> {
-  disabled = false;
-  constructor(public containerEl: HTMLElement) {}
-  setDisabled(value: boolean): this { this.disabled = value; return this; }
-  then(callback: (component: this) => any): this { callback(this); return this; }
+abstract class ValueComponent<T> extends BaseComponent {
+  constructor(public containerEl: HTMLElement) { super(); }
 }
 
 export class TextComponent extends ValueComponent<string> {
@@ -872,13 +1142,95 @@ export class Setting {
   private add<T>(Ctor: new (el: HTMLElement) => T, callback: (component: T) => any): this { const component = new Ctor(this.controlEl); this.components.push(component); callback(component); return this; }
 }
 
+export class SettingGroup {
+  listEl = document.createElement('div');
+  constructor(public containerEl: HTMLElement) {
+    this.listEl.className = 'setting-group-list';
+    containerEl.appendChild(this.listEl);
+  }
+  setHeading(text: string | DocumentFragment): this {
+    const heading = document.createElement('div');
+    heading.className = 'setting-item setting-item-heading';
+    setNodeContent(heading, text);
+    this.containerEl.insertBefore(heading, this.listEl);
+    return this;
+  }
+  addClass(...classes: string[]): this { this.containerEl.classList.add(...classes.flatMap(splitClasses)); return this; }
+  addSetting(callback: (setting: Setting) => void): this { callback(new Setting(this.listEl)); return this; }
+  addSearch(callback: (component: SearchComponent) => any): this { callback(new SearchComponent(this.listEl)); return this; }
+  addExtraButton(callback: (component: ExtraButtonComponent) => any): this { callback(new ExtraButtonComponent(this.listEl)); return this; }
+}
+
+export abstract class SettingPage {
+  rootEl = document.createElement('div');
+  titlebarEl = document.createElement('div');
+  containerEl = document.createElement('div');
+  title = '';
+  constructor() {
+    this.rootEl.className = 'setting-page';
+    this.titlebarEl.className = 'setting-page-titlebar';
+    this.containerEl.className = 'setting-page-content';
+    this.rootEl.append(this.titlebarEl, this.containerEl);
+  }
+  abstract display(): void;
+  hide(): void { this.containerEl.replaceChildren(); }
+}
+
 export class PluginSettingTab {
   id: string;
   name: string;
   containerEl = document.createElement('div');
+  icon = 'settings';
+  private activePage: SettingPage | null = null;
   constructor(public app: App, public plugin: Plugin) { this.id = plugin.manifest.id; this.name = plugin.manifest.name; this.containerEl.className = 'plugin-setting-tab'; }
-  display(): void {}
-  hide(): void {}
+  getSettingDefinitions(): any[] { return []; }
+  getControlValue(key: string): unknown { return (this.plugin as any).settings?.[key]; }
+  async setControlValue(key: string, value: unknown): Promise<void> {
+    const instance = this.plugin as any;
+    if (!instance.settings) instance.settings = {};
+    instance.settings[key] = value;
+    await instance.saveSettings?.();
+  }
+  display(): void {
+    this.activePage?.hide();
+    this.activePage = null;
+    this.containerEl.replaceChildren();
+    this.renderDefinitions(this.getSettingDefinitions(), this.containerEl);
+  }
+  hide(): void { this.activePage?.hide(); this.activePage = null; }
+  private renderDefinitions(definitions: any[], container: HTMLElement): void {
+    for (const definition of definitions ?? []) {
+      if (definition?.type === 'group' || definition?.type === 'list') {
+        const groupEl = document.createElement('div');
+        groupEl.className = 'setting-definition-group';
+        container.appendChild(groupEl);
+        const group = new SettingGroup(groupEl);
+        if (definition.heading) group.setHeading(definition.heading);
+        this.renderDefinitions(definition.items ?? [], group.listEl);
+        continue;
+      }
+      if (definition?.type === 'page' && typeof definition.page === 'function') {
+        new Setting(container)
+          .setName(definition.name ?? definition.title ?? 'Settings')
+          .setDesc(definition.desc ?? '')
+          .addButton((button) => button.setButtonText('Open').onClick(() => this.openPage(definition.page())));
+        continue;
+      }
+      if (definition?.name || definition?.desc) new Setting(container).setName(definition.name ?? '').setDesc(definition.desc ?? '');
+    }
+  }
+  private openPage(page: SettingPage): void {
+    this.activePage?.hide();
+    this.activePage = page;
+    this.containerEl.replaceChildren();
+    const back = document.createElement('button');
+    back.className = 'btn secondary setting-page-back';
+    back.textContent = '← Back';
+    back.addEventListener('click', () => this.display());
+    page.titlebarEl.replaceChildren(back, document.createTextNode(page.title));
+    this.containerEl.appendChild(page.rootEl);
+    page.display();
+  }
 }
 
 // ---- Markdown processing --------------------------------------------------
@@ -996,6 +1348,16 @@ export abstract class Plugin extends Component {
     this.register(addContribution(postProcessors, item));
     return handler;
   }
+  registerBasesView(viewId: string, registration: any): boolean {
+    if (!viewId || typeof registration?.factory !== 'function') return false;
+    if (basesViewRegistrations[viewId]) throw new Error(`Bases view already exists: ${viewId}`);
+    basesViewRegistrations[viewId] = registration;
+    this.register(() => {
+      if (basesViewRegistrations[viewId] === registration) delete basesViewRegistrations[viewId];
+    });
+    compatibilityWarning(this.manifest.id, 'Bases view registered; .base query/render hosting remains partial');
+    return true;
+  }
   registerEditorExtension(_extension: unknown): void { compatibilityWarning(this.manifest.id, 'CodeMirror editor extensions are not yet mounted'); }
   registerEditorSuggest(_suggest: unknown): void { compatibilityWarning(this.manifest.id, 'EditorSuggest is not yet mounted'); }
   registerHoverLinkSource(_id: string, _info: unknown): void {}
@@ -1004,6 +1366,10 @@ export abstract class Plugin extends Component {
   async saveData(data: unknown): Promise<void> { await api.putPluginData(this.manifest.id, data); }
   onUserEnable(): void {}
 }
+
+const pluginInstances: Record<string, Plugin> = {};
+const pluginManifests: Record<string, any> = {};
+const basesViewRegistrations: Record<string, any> = {};
 
 export class App {
   vault = new Vault();
@@ -1023,8 +1389,30 @@ export class App {
   };
   plugins = {
     enabledPlugins: new Set<string>(),
-    getPlugin: (id: string) => loaded.get(id)?.instance,
+    plugins: pluginInstances,
+    manifests: pluginManifests,
+    getPlugin: (id: string) => pluginInstances[id],
   };
+  internalPlugins = {
+    getEnabledPluginById: (id: string) => id === 'bases'
+      ? { registrations: basesViewRegistrations, manifest: { id: 'bases', version: apiVersion } }
+      : null,
+  };
+  isDarkMode(): boolean { return document.documentElement.dataset.theme === 'dark' || document.body.classList.contains('theme-dark'); }
+  loadLocalStorage(key: string): any | null {
+    try {
+      const raw = localStorage.getItem(this.localStorageKey(key));
+      return raw === null ? null : JSON.parse(raw);
+    } catch { return null; }
+  }
+  saveLocalStorage(key: string, data: unknown | null): void {
+    try {
+      const storageKey = this.localStorageKey(key);
+      if (data === null) localStorage.removeItem(storageKey);
+      else localStorage.setItem(storageKey, JSON.stringify(data));
+    } catch { /* quota/private-mode failures are non-fatal */ }
+  }
+  private localStorageKey(key: string): string { return `webobsidian:${this.vault.getName()}:${key}`; }
 }
 
 const sharedApp = new App();
@@ -1033,6 +1421,15 @@ const sharedApp = new App();
 
 export function addIcon(iconId: string, svgContent: string): void { iconRegistry.set(iconId, svgContent); }
 export function removeIcon(iconId: string): void { iconRegistry.delete(iconId); }
+const builtInIconIds = [
+  'alert-circle', 'arrow-left', 'arrow-right', 'bookmark', 'calendar', 'check',
+  'check-circle', 'chevron-down', 'chevron-left', 'chevron-right', 'chevron-up',
+  'circle', 'clock', 'file', 'file-text', 'flag', 'folder', 'help-circle', 'image',
+  'info', 'link', 'list', 'menu', 'minus', 'minus-circle', 'more-horizontal',
+  'pause', 'pencil', 'play', 'plus', 'search', 'settings', 'square', 'star',
+  'tag', 'trash', 'waypoints', 'x', 'x-circle',
+];
+export function getIconIds(): string[] { return [...new Set([...builtInIconIds, ...iconRegistry.keys()])]; }
 export function getIcon(iconId: string): SVGSVGElement | null {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 100 100');
@@ -1048,6 +1445,18 @@ export function normalizePath(path: string): string { return path.replaceAll('\\
 export function getLinkpath(linktext: string): string { return linktext.split('#')[0]; }
 export function parseLinktext(linktext: string): { path: string; subpath: string } { const index = linktext.search(/[#^]/); return index < 0 ? { path: linktext, subpath: '' } : { path: linktext.slice(0, index), subpath: linktext.slice(index) }; }
 export function clamp(value: number, min: number, max: number): number { return Math.min(max, Math.max(min, value)); }
+export function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
+export function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64.replace(/^data:[^,]*,/, ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes.buffer;
+}
 export function debounce<T extends AnyFn>(callback: T, timeout = 0, resetTimer = true): T {
   let timer: number | undefined;
   return function (this: unknown, ...args: any[]) {
@@ -1075,7 +1484,7 @@ export const Keymap = {
   isModEvent(event: KeyboardEvent | MouseEvent): boolean { return Platform.isMacOS ? event.metaKey : event.ctrlKey; },
   isModifier(modifier: string): boolean { return ['Mod', 'Ctrl', 'Meta', 'Shift', 'Alt'].includes(modifier); },
 };
-export const apiVersion = '1.0.0';
+export const apiVersion = '1.13.1';
 export function requireApiVersion(version: string): boolean {
   const parse = (value: string) => value.split('.').slice(0, 3).map((part) => Number.parseInt(part, 10) || 0);
   const current = parse(apiVersion);
@@ -1106,6 +1515,123 @@ export function sanitizeHTMLToDom(html: string): DocumentFragment {
   });
   return template.content;
 }
+export function getLanguage(): string {
+  let configured = '';
+  try { configured = localStorage.getItem('language') ?? ''; } catch { /* storage may be disabled */ }
+  const raw = (configured || document.documentElement.lang || navigator.language || 'en').replaceAll('_', '-');
+  const lower = raw.toLowerCase();
+  if (lower.startsWith('zh-tw') || lower.startsWith('zh-hk') || lower.startsWith('zh-hant')) return 'zh-TW';
+  if (lower.startsWith('zh')) return 'zh-CN';
+  if (lower.startsWith('pt-br')) return 'pt-BR';
+  return lower.split('-')[0] || 'en';
+}
+
+export function prepareSimpleSearch(query: string): (text: string) => any | null {
+  const terms = query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  return (text: string) => {
+    const lower = text.toLocaleLowerCase();
+    const matches: Array<[number, number]> = [];
+    let score = 0;
+    for (const term of terms) {
+      const index = lower.indexOf(term);
+      if (index < 0) return null;
+      matches.push([index, index + term.length]);
+      score += index;
+    }
+    return { score, matches };
+  };
+}
+
+export function prepareFuzzySearch(query: string): (text: string) => any | null {
+  const needle = query.toLocaleLowerCase().replace(/\s+/g, '');
+  if (!needle) return () => ({ score: 0, matches: [] });
+  return (text: string) => {
+    const haystack = text.toLocaleLowerCase();
+    const positions: number[] = [];
+    let cursor = 0;
+    for (const char of needle) {
+      const index = haystack.indexOf(char, cursor);
+      if (index < 0) return null;
+      positions.push(index);
+      cursor = index + 1;
+    }
+    const matches: Array<[number, number]> = [];
+    for (const position of positions) {
+      const last = matches[matches.length - 1];
+      if (last && last[1] === position) last[1] = position + 1;
+      else matches.push([position, position + 1]);
+    }
+    const gaps = positions.at(-1)! - positions[0] - positions.length + 1;
+    return { score: positions[0] + Math.max(0, gaps), matches };
+  };
+}
+
+export function renderMatches(
+  el: HTMLElement | DocumentFragment,
+  text: string,
+  matches: Array<[number, number]> | null,
+  offset = 0,
+): void {
+  el.replaceChildren();
+  if (!matches?.length) { el.appendChild(document.createTextNode(text)); return; }
+  let cursor = 0;
+  for (const [rawFrom, rawTo] of matches) {
+    const from = Math.max(cursor, rawFrom - offset);
+    const to = Math.min(text.length, rawTo - offset);
+    if (from > cursor) el.appendChild(document.createTextNode(text.slice(cursor, from)));
+    if (to > from) {
+      const mark = document.createElement('span');
+      mark.className = 'suggestion-highlight';
+      mark.textContent = text.slice(from, to);
+      el.appendChild(mark);
+    }
+    cursor = Math.max(cursor, to);
+  }
+  if (cursor < text.length) el.appendChild(document.createTextNode(text.slice(cursor)));
+}
+
+export function renderResults(el: HTMLElement, text: string, result: any, offset = 0): void {
+  renderMatches(el, text, result?.matches ?? null, offset);
+}
+
+export function htmlToMarkdown(input: string | HTMLElement | Document | DocumentFragment): string {
+  const root = typeof input === 'string'
+    ? new DOMParser().parseFromString(input, 'text/html').body
+    : input instanceof Document ? input.body : input;
+  const walk = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+    if (!(node instanceof Element)) return [...node.childNodes].map(walk).join('');
+    const content = [...node.childNodes].map(walk).join('');
+    const tag = node.tagName.toLowerCase();
+    if (tag === 'br') return '\n';
+    if (tag === 'strong' || tag === 'b') return `**${content}**`;
+    if (tag === 'em' || tag === 'i') return `*${content}*`;
+    if (tag === 'del' || tag === 's') return `~~${content}~~`;
+    if (tag === 'code' && node.parentElement?.tagName.toLowerCase() !== 'pre') return `\`${content}\``;
+    if (tag === 'pre') return `\n\`\`\`\n${node.textContent ?? ''}\n\`\`\`\n`;
+    if (/^h[1-6]$/.test(tag)) return `${'#'.repeat(Number(tag[1]))} ${content.trim()}\n\n`;
+    if (tag === 'a') return `[${content}](${node.getAttribute('href') ?? ''})`;
+    if (tag === 'img') return `![${node.getAttribute('alt') ?? ''}](${node.getAttribute('src') ?? ''})`;
+    if (tag === 'li') return `- ${content.trim()}\n`;
+    if (tag === 'blockquote') return `${content.trim().split('\n').map((line) => `> ${line}`).join('\n')}\n\n`;
+    if (['p', 'div', 'section', 'article', 'ul', 'ol'].includes(tag)) return `${content.trimEnd()}\n\n`;
+    return content;
+  };
+  return walk(root).replace(/\n{3,}/g, '\n\n').trim();
+}
+
+let pdfJsPromise: Promise<any> | null = null;
+export function loadPdfJs(): Promise<any> {
+  if (!pdfJsPromise) {
+    pdfJsPromise = import('pdfjs-dist/legacy/build/pdf.mjs').then((pdfjs) => {
+      if (pdfjs.GlobalWorkerOptions) pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+      (globalThis as any).pdfjsLib = pdfjs;
+      return pdfjs;
+    });
+  }
+  return pdfJsPromise;
+}
+
 export function getAllTags(cache: any): string[] | null {
   if (!cache) return null;
   const tags = new Set<string>((cache.tags ?? []).map((entry: any) => String(entry.tag)));
@@ -1115,6 +1641,16 @@ export function getAllTags(cache: any): string[] | null {
   return [...tags];
 }
 export function parseFrontMatterAliases(frontmatter: any): string[] | null { const value = frontmatter?.aliases ?? frontmatter?.alias; return value == null ? null : (Array.isArray(value) ? value : [value]).map(String); }
+export function parseFrontMatterEntry(frontmatter: any, key: string | RegExp): any | null {
+  if (!frontmatter || typeof frontmatter !== 'object') return null;
+  if (typeof key === 'string') return Object.prototype.hasOwnProperty.call(frontmatter, key) ? frontmatter[key] : null;
+  const match = Object.keys(frontmatter).find((name) => { key.lastIndex = 0; return key.test(name); });
+  return match === undefined ? null : frontmatter[match];
+}
+export function parseFrontMatterStringArray(frontmatter: any, key: string | RegExp): string[] | null {
+  const value = parseFrontMatterEntry(frontmatter, key);
+  return value == null ? null : (Array.isArray(value) ? value : [value]).map(String);
+}
 export function parseFrontMatterTags(frontmatter: any): string[] | null { const value = frontmatter?.tags ?? frontmatter?.tag; return value == null ? null : (Array.isArray(value) ? value : String(value).split(/[,\s]+/)).map(String); }
 export function getFrontMatterInfo(content: string): any {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/);
@@ -1150,18 +1686,22 @@ const Platform = {
 };
 
 const obsidianModule: Record<string, any> = {
-  App, Plugin, Component, Events, Notice, Modal, SuggestModal, FuzzySuggestModal,
-  Menu, MenuItem, Setting, PluginSettingTab,
+  App, Plugin, BaseComponent, Component, Events, Notice, Modal,
+  PopoverSuggest, AbstractInputSuggest, EditorSuggest, SuggestModal, FuzzySuggestModal,
+  Menu, MenuItem, Setting, SettingGroup, SettingPage, PluginSettingTab,
   TextComponent, TextAreaComponent, SearchComponent, ToggleComponent,
   DropdownComponent, ButtonComponent, ExtraButtonComponent, SliderComponent, ColorComponent,
-  TAbstractFile, TFile, TFolder, Vault, MetadataCache, Workspace, WorkspaceLeaf,
+  TAbstractFile, TFile, TFolder, Vault, FileSystemAdapter, MetadataCache,
+  Workspace, WorkspaceItem, WorkspaceParent, WorkspaceSplit, WorkspaceLeaf,
   View, ItemView, FileView, TextFileView, MarkdownView, MarkdownPreviewView, Editor, FileManager,
-  MarkdownRenderer, MarkdownRenderChild,
+  MarkdownRenderer, MarkdownRenderChild, editorEditorField, editorInfoField, editorLivePreviewField,
   Platform, Keymap, Scope, moment, apiVersion, parseYaml, stringifyYaml,
-  addIcon, removeIcon, getIcon, setIcon, normalizePath, getLinkpath, parseLinktext,
-  clamp, debounce, requireApiVersion, request, requestUrl,
+  addIcon, removeIcon, getIcon, getIconIds, setIcon, normalizePath, getLinkpath, parseLinktext,
+  arrayBufferToBase64, base64ToArrayBuffer, clamp, debounce, requireApiVersion, request, requestUrl,
   createEl, createDiv, createSpan, createFragment, setTooltip, sanitizeHTMLToDom,
-  getAllTags, parseFrontMatterAliases, parseFrontMatterTags, getFrontMatterInfo,
+  getAllTags, getLanguage, htmlToMarkdown, loadPdfJs, prepareFuzzySearch, prepareSimpleSearch,
+  renderMatches, renderResults, parseFrontMatterAliases, parseFrontMatterEntry,
+  parseFrontMatterStringArray, parseFrontMatterTags, getFrontMatterInfo,
 };
 
 // ---- Loader + command execution ------------------------------------------
@@ -1184,15 +1724,66 @@ declare global {
   var __webObsidianRequire: (pluginId: string, moduleName: string) => any;
 }
 
+const externalModules: Record<string, any> = {
+  '@codemirror/autocomplete': CodeMirrorAutocomplete,
+  '@codemirror/commands': CodeMirrorCommands,
+  '@codemirror/language': CodeMirrorLanguage,
+  '@codemirror/state': CodeMirrorState,
+  '@codemirror/view': CodeMirrorView,
+  '@lezer/lr': LezerLR,
+  react: ReactModule,
+  'ajv-formats/dist/formats': AjvFormats,
+  'ajv-formats/dist/formats.js': AjvFormats,
+  'ajv/dist/runtime/equal': { default: AjvEqual },
+  'ajv/dist/runtime/equal.js': { default: AjvEqual },
+  'ajv/dist/runtime/ucs2length': { default: AjvUcs2Length },
+  'ajv/dist/runtime/ucs2length.js': { default: AjvUcs2Length },
+  'ajv/dist/runtime/uri': { default: AjvUri },
+  'ajv/dist/runtime/uri.js': { default: AjvUri },
+  'ajv/dist/runtime/validation_error': { default: AjvValidationError },
+  'ajv/dist/runtime/validation_error.js': { default: AjvValidationError },
+};
+const obsidianModuleProxies = new Map<string, Record<string, any>>();
+const nodeModules = new Set([
+  'assert', 'buffer', 'child_process', 'crypto', 'electron', 'fs', 'http', 'http2',
+  'module', 'net', 'os', 'path', 'process', 'stream', 'tls', 'url', 'util', 'zlib',
+]);
+
+function obsidianModuleFor(pluginId: string): Record<string, any> {
+  let proxy = obsidianModuleProxies.get(pluginId);
+  if (proxy) return proxy;
+  proxy = new Proxy(obsidianModule, {
+    get(target, property, receiver) {
+      if (typeof property !== 'string' || property in target) return Reflect.get(target, property, receiver);
+      throw new Error(`Plugin "${pluginId}" requires unsupported Obsidian API "${property}"`);
+    },
+  });
+  obsidianModuleProxies.set(pluginId, proxy);
+  return proxy;
+}
+
 globalThis.__webObsidianRequire = (pluginId: string, moduleName: string) => {
-  if (moduleName === 'obsidian') return obsidianModule;
-  throw new Error(`Plugin "${pluginId}" requires unsupported module "${moduleName}" (Node/Electron modules are unavailable on the web)`);
+  if (moduleName === 'obsidian') return obsidianModuleFor(pluginId);
+  if (Object.prototype.hasOwnProperty.call(externalModules, moduleName)) return externalModules[moduleName];
+  if (nodeModules.has(moduleName) || moduleName.startsWith('node:')) {
+    throw new Error(`Plugin "${pluginId}" requires Node/Electron module "${moduleName}", which is unavailable on the web`);
+  }
+  throw new Error(`Plugin "${pluginId}" requires unsupported browser module "${moduleName}"`);
 };
 
 async function loadPlugin(id: string, manifest: any, bustCache = false): Promise<void> {
   if (loaded.has(id)) return;
   if (manifest.isDesktopOnly) {
     setPluginState({ id, name: manifest.name, status: 'incompatible', message: 'Desktop-only plugin (requires Node/Electron)' });
+    return;
+  }
+  if (manifest.minAppVersion && !requireApiVersion(manifest.minAppVersion)) {
+    setPluginState({
+      id,
+      name: manifest.name,
+      status: 'incompatible',
+      message: `Requires Obsidian API ${manifest.minAppVersion}; WebObsidian targets ${apiVersion}`,
+    });
     return;
   }
   setPluginState({ id, name: manifest.name, status: 'loading' });
@@ -1202,8 +1793,12 @@ async function loadPlugin(id: string, manifest: any, bustCache = false): Promise
     const module = await import(/* @vite-ignore */ `/api/plugins/${encodeURIComponent(id)}/module.js?${query}`);
     const PluginClass = module.default;
     if (typeof PluginClass !== 'function') throw new Error('main.js does not export a Plugin class');
-    const pluginInstance = new PluginClass(sharedApp, { ...manifest, dir: manifest.dir ?? `.obsidian/plugins/${id}` }) as Plugin;
+    const fullManifest = { ...manifest, dir: manifest.dir ?? `.obsidian/plugins/${id}` };
+    const pluginInstance = new PluginClass(sharedApp, fullManifest) as Plugin;
     instance = pluginInstance;
+    pluginInstances[id] = pluginInstance;
+    pluginManifests[id] = fullManifest;
+    sharedApp.plugins.enabledPlugins.add(id);
     await pluginInstance.loadAsync();
     let style: HTMLLinkElement | undefined;
     if (manifest.hasStyles) {
@@ -1214,12 +1809,14 @@ async function loadPlugin(id: string, manifest: any, bustCache = false): Promise
       document.head.appendChild(style);
     }
     loaded.set(id, { instance: pluginInstance, style });
-    sharedApp.plugins.enabledPlugins.add(id);
     queueMicrotask(() => sharedApp.metadataCache.trigger('resolved'));
     setPluginState({ id, name: manifest.name, status: 'loaded', loadedAt: Date.now() });
     console.info(`[plugin] loaded ${id}`);
   } catch (error: any) {
     try { instance?.unload(); } catch { /* best effort */ }
+    delete pluginInstances[id];
+    delete pluginManifests[id];
+    sharedApp.plugins.enabledPlugins.delete(id);
     const message = error instanceof Error ? error.message : String(error);
     setPluginState({ id, name: manifest.name, status: 'failed', message });
     console.warn(`[plugin] failed to load ${id}:`, error);
@@ -1233,6 +1830,8 @@ async function unloadPlugin(id: string): Promise<void> {
   try { entry.instance.unload(); } catch (error) { console.error(`[plugin] failed to unload ${id}`, error); }
   entry.style?.remove();
   loaded.delete(id);
+  delete pluginInstances[id];
+  delete pluginManifests[id];
   sharedApp.plugins.enabledPlugins.delete(id);
   warnings.delete(id);
 }
@@ -1253,9 +1852,16 @@ function subscribeStoreEvents(): void {
 }
 
 /** Load all enabled plugins. Failed plugins remain visible with diagnostics. */
-export async function loadPlugins(): Promise<void> {
+export function initializePluginRuntime(): void {
   installDomHelpers();
   subscribeStoreEvents();
+}
+
+export function getPluginApp(): App { return sharedApp; }
+
+/** Load all enabled plugins. Failed plugins remain visible with diagnostics. */
+export async function loadPlugins(): Promise<void> {
+  initializePluginRuntime();
   const { plugins } = await api.listPlugins();
   const enabledIds = new Set(plugins.filter((plugin: any) => plugin.enabled).map((plugin: any) => plugin.id));
   for (const id of [...loaded.keys()]) if (!enabledIds.has(id)) await unloadPlugin(id);
