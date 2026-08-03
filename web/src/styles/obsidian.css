@@ -897,6 +897,9 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
   overflow: auto;
 }
 .plugin-view-content > .view-content { min-height: 100%; box-sizing: border-box; }
+.plugin-view-content > .plugin-view-header { display: none; }
+.plugin-sidebar-body { flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.plugin-sidebar-body > .plugin-view-host { height: 100%; }
 .plugin-view-loading, .plugin-view-error { padding: 24px; color: var(--text-muted); }
 .plugin-view-error { color: var(--text-error, #e5534b); }
 .plugin-settings-host > .plugin-setting-tab { width: 100%; }

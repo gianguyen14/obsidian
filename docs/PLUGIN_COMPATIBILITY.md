@@ -14,9 +14,9 @@ optional `styles.css`, and `data.json` layout as Obsidian.
 - Plugin lifecycle: enable, disable, reload, cleanup, and readable load diagnostics.
 - Vault files/folders: text and binary read/write, create, rename, copy, delete, events,
   resource URLs, and the adapter subset.
-- Workspace: active file, file-open events, leaves, custom `ItemView` registration, and
-  extension-to-view registration.
-- UI: commands/default hotkeys, ribbon buttons, status-bar items, modal/notice/menu,
+- Workspace: active file, file-open events, main/left/right leaves, docked sidebar
+  views, custom `ItemView` registration, and extension-to-view registration.
+- UI: commands/default hotkeys, actionable ribbon buttons, status-bar items, modal/notice/menu,
   settings tabs, `Setting`, input suggestions, setting groups/pages, and common input
   components.
 - Markdown Reading view: post-processors and fenced code-block processors.
@@ -68,6 +68,7 @@ publisher and source you trust: a loaded plugin can read and modify the vault.
 
 The compatibility regression suite evaluates and runs `onload()` from the published
 bundles for Breadcrumbs 4.21.9, Notebook Navigator 3.3.0, TaskNotes 4.11.1, and
-Excalidraw 2.25.3. Passing this check means the plugin starts without a missing class,
-helper, or external-module failure; individual features may still fall into the partial
-or unsupported categories above.
+Excalidraw 2.25.3. It also clicks Notebook Navigator's published ribbon action and
+verifies that its real `ItemView` opens in the left sidebar. Passing these checks means
+the plugin starts without a missing class, helper, or external-module failure;
+individual features may still fall into the partial or unsupported categories above.

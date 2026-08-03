@@ -144,6 +144,10 @@ interface AppState {
   setLeftPanel: (p: 'files' | 'search' | 'tags' | 'bookmarks') => void;
   rightPanel: 'backlinks' | 'outgoing' | 'tags' | 'outline';
   setRightPanel: (p: 'backlinks' | 'outgoing' | 'tags' | 'outline') => void;
+  /** Active community-plugin view docked in either sidebar. */
+  pluginLeftPath: string | null;
+  pluginRightPath: string | null;
+  showPluginSidebar: (side: 'left' | 'right', path: string | null) => void;
   /** Query pushed into the search panel (e.g. clicking a tag node in the graph). */
   searchQuery: string;
   searchFor: (q: string) => void;
@@ -393,11 +397,16 @@ export const useStore = create<AppState>()(
         })),
 
       leftPanel: 'files',
-      setLeftPanel: (p) => set({ leftPanel: p, leftOpen: true }),
+      setLeftPanel: (p) => set({ leftPanel: p, leftOpen: true, pluginLeftPath: null }),
       rightPanel: 'backlinks',
-      setRightPanel: (p) => set({ rightPanel: p, rightOpen: true }),
+      setRightPanel: (p) => set({ rightPanel: p, rightOpen: true, pluginRightPath: null }),
+      pluginLeftPath: null,
+      pluginRightPath: null,
+      showPluginSidebar: (side, path) => set(side === 'left'
+        ? { pluginLeftPath: path, leftOpen: path ? true : get().leftOpen }
+        : { pluginRightPath: path, rightOpen: path ? true : get().rightOpen }),
       searchQuery: '',
-      searchFor: (q) => set({ searchQuery: q, leftPanel: 'search', leftOpen: true }),
+      searchFor: (q) => set({ searchQuery: q, leftPanel: 'search', leftOpen: true, pluginLeftPath: null }),
       leftOpen: true,
       rightOpen: true,
       toggleLeft: () => set((s) => ({ leftOpen: !s.leftOpen })),

@@ -625,35 +625,59 @@ export class Editor {
 }
 
 export class WorkspaceItem extends Events {
-  getRoot(): WorkspaceItem { return this; }
+  parent: WorkspaceParent | null = null;
+  getRoot(): WorkspaceItem {
+    let item: WorkspaceItem = this;
+    while (item.parent) item = item.parent;
+    return item;
+  }
 }
 export class WorkspaceParent extends WorkspaceItem {}
 export class WorkspaceSplit extends WorkspaceParent {
-  parent: WorkspaceParent | null = null;
+  constructor(public region: 'main' | 'left' | 'right' = 'main') { super(); }
+  get collapsed(): boolean {
+    const state = useStore.getState();
+    return this.region === 'left' ? !state.leftOpen : this.region === 'right' ? !state.rightOpen : false;
+  }
+  collapse(): void {
+    if (this.region === 'left') useStore.setState({ leftOpen: false });
+    if (this.region === 'right') useStore.setState({ rightOpen: false });
+  }
+  expand(): void {
+    if (this.region === 'left') useStore.setState({ leftOpen: true });
+    if (this.region === 'right') useStore.setState({ rightOpen: true });
+  }
+  toggle(): void { this.collapsed ? this.expand() : this.collapse(); }
 }
 
 export class WorkspaceLeaf extends WorkspaceItem {
   readonly id = contributionId('workspace', 'leaf');
   view: View;
-  parent: WorkspaceParent | null = null;
   private state: any = { type: 'empty', state: {} };
-  constructor() { super(); this.view = new EmptyView(this); }
+  constructor(public region: 'main' | 'left' | 'right' = 'main') { super(); this.view = new EmptyView(this); }
   async openFile(file: TFile): Promise<void> { await useStore.getState().openFile(file.path); }
   async open(view: View): Promise<View> { await this.view.onClose(); this.view = view; await view.onOpen(); return view; }
   getViewState(): any { return this.state; }
   async setViewState(state: any): Promise<void> {
-    this.state = state;
     const registered = viewCreators.get(state.type);
     if (!registered) throw new Error(`No view registered for type: ${state.type}`);
+    const previousEntry = [...activeViews].find(([, leaf]) => leaf === this);
+    if (previousEntry) activeViews.delete(previousEntry[0]);
+    this.state = state;
     await this.view.onClose();
     this.view = registered.creator(this);
     await this.view.setState(state.state ?? {}, {});
     await this.view.onOpen();
     const path = `${PLUGIN_VIEW_PREFIX}${encodeURIComponent(state.type)}/${this.id}`;
     activeViews.set(path, this);
-    await useStore.getState().openFile(path);
     const title = this.view.getDisplayText();
-    useStore.setState((current) => ({ tabs: current.tabs.map((tab) => tab.path === path ? { ...tab, title } : tab) }));
+    if (this.region === 'main') {
+      await useStore.getState().openFile(path);
+      useStore.setState((current) => ({ tabs: current.tabs.map((tab) => tab.path === path ? { ...tab, title } : tab) }));
+    } else {
+      useStore.getState().showPluginSidebar(this.region, path);
+    }
+    changed();
   }
   async loadIfDeferred(): Promise<void> {}
   get isDeferred(): boolean { return false; }
@@ -663,7 +687,19 @@ export class WorkspaceLeaf extends WorkspaceItem {
   setPinned(_pinned: boolean): void {}
   setGroupMember(_other: WorkspaceLeaf): void {}
   setGroup(_group: string): void {}
-  detach(): void { const entry = [...activeViews].find(([, leaf]) => leaf === this); if (entry) { void this.view.onClose(); activeViews.delete(entry[0]); useStore.getState().closeTab(entry[0]); } }
+  detach(): void {
+    const entry = [...activeViews].find(([, leaf]) => leaf === this);
+    if (!entry) return;
+    void this.view.onClose();
+    activeViews.delete(entry[0]);
+    if (this.region === 'main') useStore.getState().closeTab(entry[0]);
+    else {
+      const state = useStore.getState();
+      const activePath = this.region === 'left' ? state.pluginLeftPath : state.pluginRightPath;
+      if (activePath === entry[0]) state.showPluginSidebar(this.region, null);
+    }
+    changed();
+  }
   getIcon(): string { return this.view.getIcon(); }
   getDisplayText(): string { return this.view.getDisplayText(); }
   onResize(): void { this.view.onResize(); }
@@ -690,12 +726,17 @@ export class View extends Component {
 class EmptyView extends View { getViewType(): string { return 'empty'; } getDisplayText(): string { return 'Empty'; } }
 
 export class ItemView extends View {
+  headerEl: HTMLElement;
   contentEl: HTMLElement;
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
+    this.headerEl = document.createElement('div');
+    this.headerEl.className = 'view-header plugin-view-header';
     this.contentEl = document.createElement('div');
     this.contentEl.className = 'view-content';
-    this.containerEl.appendChild(this.contentEl);
+    // Obsidian ItemView exposes the header as child 0 and content as child 1.
+    // Several community plugins intentionally use this stable DOM contract.
+    this.containerEl.append(this.headerEl, this.contentEl);
   }
 }
 
@@ -754,26 +795,57 @@ export class Workspace extends Events {
   layoutReady = true;
   containerEl = document.body;
   activeEditor: any = null;
+  rootSplit = new WorkspaceSplit('main');
+  leftSplit = new WorkspaceSplit('left');
+  rightSplit = new WorkspaceSplit('right');
+  private createLeaf(region: 'main' | 'left' | 'right'): WorkspaceLeaf {
+    const leaf = new WorkspaceLeaf(region);
+    leaf.parent = region === 'left' ? this.leftSplit : region === 'right' ? this.rightSplit : this.rootSplit;
+    return leaf;
+  }
   onLayoutReady(callback: () => any): void { queueMicrotask(callback); }
   getActiveFile(): TFile | null { const path = useStore.getState().activePath; const file = path ? abstractFile(path) : null; return file instanceof TFile ? file : null; }
   get activeLeaf(): WorkspaceLeaf | null {
     const path = useStore.getState().activePath;
     if (path && activeViews.has(path)) return activeViews.get(path)!;
-    const leaf = new WorkspaceLeaf();
+    const leaf = this.createLeaf('main');
     if (path && /\.(md|markdown)$/i.test(path)) { const view = new MarkdownView(leaf); view.file = this.getActiveFile(); leaf.view = view; }
     return leaf;
   }
-  getLeaf(_newLeaf?: any): WorkspaceLeaf { return this.activeLeaf ?? new WorkspaceLeaf(); }
-  getLeftLeaf(_split: boolean): WorkspaceLeaf { return this.getLeaf(); }
-  getRightLeaf(_split: boolean): WorkspaceLeaf { return this.getLeaf(); }
+  getLeaf(newLeaf?: any): WorkspaceLeaf { return newLeaf ? this.createLeaf('main') : this.activeLeaf ?? this.createLeaf('main'); }
+  getLeftLeaf(_split: boolean): WorkspaceLeaf { return this.createLeaf('left'); }
+  getRightLeaf(_split: boolean): WorkspaceLeaf { return this.createLeaf('right'); }
   async openLinkText(linktext: string, _sourcePath: string, _newLeaf?: any): Promise<void> { await useStore.getState().openWikilink(linktext); }
   getActiveViewOfType<T extends View>(type: new (...args: any[]) => T): T | null { const view = this.activeLeaf?.view; return view instanceof type ? view : null; }
   getLeavesOfType(type: string): WorkspaceLeaf[] { return [...activeViews.values()].filter((leaf) => leaf.view.getViewType() === type); }
   detachLeavesOfType(type: string): void { this.getLeavesOfType(type).forEach((leaf) => leaf.detach()); }
-  iterateRootLeaves(callback: (leaf: WorkspaceLeaf) => any): void { const leaf = this.activeLeaf; if (leaf) callback(leaf); }
-  iterateAllLeaves(callback: (leaf: WorkspaceLeaf) => any): void { this.iterateRootLeaves(callback); }
-  async revealLeaf(leaf: WorkspaceLeaf): Promise<void> { const entry = [...activeViews].find(([, item]) => item === leaf); if (entry) await useStore.getState().openFile(entry[0]); }
+  iterateRootLeaves(callback: (leaf: WorkspaceLeaf) => any): void {
+    const seen = new Set<WorkspaceLeaf>();
+    for (const leaf of activeViews.values()) {
+      if (leaf.region === 'main' && !seen.has(leaf)) { seen.add(leaf); callback(leaf); }
+    }
+    const active = this.activeLeaf;
+    if (active && !seen.has(active)) callback(active);
+  }
+  iterateAllLeaves(callback: (leaf: WorkspaceLeaf) => any): void {
+    const seen = new Set<WorkspaceLeaf>();
+    for (const leaf of activeViews.values()) if (!seen.has(leaf)) { seen.add(leaf); callback(leaf); }
+    const active = this.activeLeaf;
+    if (active && !seen.has(active)) callback(active);
+  }
+  async revealLeaf(leaf: WorkspaceLeaf): Promise<void> {
+    const entry = [...activeViews].find(([, item]) => item === leaf);
+    if (!entry) return;
+    if (leaf.region === 'main') await useStore.getState().openFile(entry[0]);
+    else useStore.getState().showPluginSidebar(leaf.region, entry[0]);
+  }
   setActiveLeaf(leaf: WorkspaceLeaf): void { void this.revealLeaf(leaf); }
+  getLeafById(id: string): WorkspaceLeaf | null { return [...activeViews.values()].find((leaf) => leaf.id === id) ?? null; }
+  getMostRecentLeaf(root?: WorkspaceItem): WorkspaceLeaf | null {
+    const region = root instanceof WorkspaceSplit ? root.region : 'main';
+    const leaves = [...activeViews.values()].filter((leaf) => leaf.region === region);
+    return leaves.at(-1) ?? (region === 'main' ? this.activeLeaf : null);
+  }
   getLastOpenFiles(): string[] { return useStore.getState().recent.slice(0, 10); }
   updateOptions(): void { this.trigger('css-change'); }
 }
@@ -1309,9 +1381,25 @@ export abstract class Plugin extends Component {
   addRibbonIcon(icon: string, title: string, callback: (event: MouseEvent) => any): HTMLElement {
     const el = document.createElement('button');
     el.className = 'clickable-icon plugin-ribbon-button';
+    el.type = 'button';
     el.title = title;
+    el.setAttribute('aria-label', title);
     setIcon(el, icon);
-    el.addEventListener('click', callback);
+    const onClick = (event: MouseEvent) => {
+      try {
+        Promise.resolve(callback(event)).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`[plugin:${this.manifest.id}] Ribbon action failed`, error);
+          new Notice(`${title}: ${message}`, 7000);
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[plugin:${this.manifest.id}] Ribbon action failed`, error);
+        new Notice(`${title}: ${message}`, 7000);
+      }
+    };
+    el.addEventListener('click', onClick);
+    this.register(() => el.removeEventListener('click', onClick));
     const item = { id: contributionId(this.manifest.id, 'ribbon'), pluginId: this.manifest.id, el };
     this.register(addContribution(ribbonItems, item));
     return el;
@@ -1422,22 +1510,32 @@ const sharedApp = new App();
 export function addIcon(iconId: string, svgContent: string): void { iconRegistry.set(iconId, svgContent); }
 export function removeIcon(iconId: string): void { iconRegistry.delete(iconId); }
 const builtInIconIds = [
-  'alert-circle', 'arrow-left', 'arrow-right', 'bookmark', 'calendar', 'check',
+  'alert-circle', 'arrow-left', 'arrow-right', 'bar-chart-3', 'bookmark', 'calendar', 'calendar-days', 'check',
   'check-circle', 'chevron-down', 'chevron-left', 'chevron-right', 'chevron-up',
-  'circle', 'clock', 'file', 'file-text', 'flag', 'folder', 'help-circle', 'image',
+  'check-square', 'circle', 'clock', 'columns-3', 'file', 'file-text', 'flag', 'folder', 'help-circle', 'image',
   'info', 'link', 'list', 'menu', 'minus', 'minus-circle', 'more-horizontal',
   'pause', 'pencil', 'play', 'plus', 'search', 'settings', 'square', 'star',
-  'tag', 'trash', 'waypoints', 'x', 'x-circle',
+  'tag', 'timer', 'trash', 'waypoints', 'x', 'x-circle',
 ];
+const builtInIconSvg: Record<string, string> = {
+  calendar: '<path d="M8 2v4M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
+  'calendar-days': '<path d="M8 2v4M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/>',
+  'check-square': '<path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  'columns-3': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18M15 3v18"/>',
+  timer: '<path d="M10 2h4M12 14v-4M4 13a8 8 0 1 0 8-8 7.9 7.9 0 0 0-4.9 1.7L4 10"/>',
+  'bar-chart-3': '<path d="M3 3v18h18M18 17V9M13 17V5M8 17v-3"/>',
+};
 export function getIconIds(): string[] { return [...new Set([...builtInIconIds, ...iconRegistry.keys()])]; }
 export function getIcon(iconId: string): SVGSVGElement | null {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 100 100');
+  const registered = iconRegistry.get(iconId);
+  svg.setAttribute('viewBox', registered ? '0 0 100 100' : '0 0 24 24');
   svg.setAttribute('width', '18');
   svg.setAttribute('height', '18');
   svg.setAttribute('fill', 'none');
   svg.setAttribute('stroke', 'currentColor');
-  svg.innerHTML = iconRegistry.get(iconId) ?? '<circle cx="50" cy="50" r="34"/><path d="M50 28v44M28 50h44"/>';
+  svg.innerHTML = registered ?? builtInIconSvg[iconId] ?? '<circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/>';
   return svg;
 }
 export function setIcon(parent: HTMLElement, iconId: string): void { parent.replaceChildren(getIcon(iconId)!); parent.dataset.icon = iconId; }
