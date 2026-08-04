@@ -570,6 +570,9 @@ function PluginBrowser({ installed, onClose }: { installed: any[]; onClose: () =
   const [catalog, setCatalog] = useState<any[]>([]);
   const [query, setQuery] = useState('');
   const [installedOnly, setInstalledOnly] = useState(false);
+  const [sort, setSort] = useState<'downloads' | 'updated' | 'name'>('downloads');
+  const [details, setDetails] = useState<any | null>(null);
+  const [visibleCount, setVisibleCount] = useState(100);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [installing, setInstalling] = useState<string | null>(null);
@@ -586,7 +589,15 @@ function PluginBrowser({ installed, onClose }: { installed: any[]; onClose: () =
     loadCatalog();
   }, []);
   const needle = query.trim().toLowerCase();
-  const filtered = catalog.filter((plugin) => (!installedOnly || installedIds.has(plugin.id)) && (!needle || `${plugin.name} ${plugin.description ?? ''} ${plugin.author ?? ''}`.toLowerCase().includes(needle)));
+  const filtered = catalog
+    .filter((plugin) => (!installedOnly || installedIds.has(plugin.id)) && (!needle || `${plugin.name} ${plugin.description ?? ''} ${plugin.author ?? ''}`.toLowerCase().includes(needle)))
+    .sort((left, right) => {
+      if (sort === 'updated') return (right.updated ?? 0) - (left.updated ?? 0) || right.downloads - left.downloads;
+      if (sort === 'name') return left.name.localeCompare(right.name);
+      return right.downloads - left.downloads || left.name.localeCompare(right.name);
+    });
+  useEffect(() => setVisibleCount(100), [query, installedOnly, sort]);
+  const visible = filtered.slice(0, visibleCount);
   const install = async (plugin: any) => {
     setInstalling(plugin.id);
     setError('');
@@ -602,38 +613,55 @@ function PluginBrowser({ installed, onClose }: { installed: any[]; onClose: () =
         <div className="plugin-browser-titlebar"><strong>Community plugins</strong><button className="icon-button" onClick={onClose} aria-label="Close community plugins"><Icon name="x" size={18} /></button></div>
         <div className="plugin-browser-toolbar">
           <div className="community-search"><Icon name="search" size={17} /><input autoFocus placeholder="Search community plugins…" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
-          <label className="installed-only"><span>Show installed only</span><Switch value={installedOnly} onChange={setInstalledOnly} label="Show installed only" /></label>
-          <div className="community-count">{loading ? 'Loading plugins…' : `Showing ${filtered.length.toLocaleString()} plugins`}</div>
+          <div className="plugin-browser-filters">
+            <label className="installed-only"><span>Show installed only</span><Switch value={installedOnly} onChange={setInstalledOnly} label="Show installed only" /></label>
+            <label className="plugin-sort"><span>Sort by</span><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="downloads">Most downloaded</option><option value="updated">Recently updated</option><option value="name">Name</option></select></label>
+          </div>
+          <div className="community-count">{loading ? 'Loading plugins…' : `${filtered.length.toLocaleString()} plugins found · showing ${Math.min(visible.length, filtered.length).toLocaleString()}`}</div>
         </div>
         {error && <div className="plugin-browser-error"><span>{error}</span><button className="btn secondary" onClick={loadCatalog}>Try again</button></div>}
         <div className="plugin-grid">
-          {filtered.map((plugin) => (
-            <article className="plugin-card" key={plugin.id}>
+          {visible.map((plugin) => (
+            <article className="plugin-card" key={plugin.id} role="button" tabIndex={0} onClick={() => setDetails(plugin)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setDetails(plugin); } }}>
               <div className="plugin-card-title"><strong>{plugin.name}</strong>{installedIds.has(plugin.id) && <span>INSTALLED</span>}</div>
               {plugin.author && <div className="plugin-card-author">By {plugin.author}</div>}
               <p>{plugin.description || 'No description provided.'}</p>
+              <div className="plugin-card-stats"><span><Icon name="download" size={13} />{formatDownloads(plugin.downloads)}</span>{plugin.updated && <span>Updated {formatPluginDate(plugin.updated)}</span>}</div>
               <div className="plugin-card-footer">
-                <a href={`https://github.com/${plugin.repo}`} target="_blank" rel="noreferrer">View repository</a>
-                {!installedIds.has(plugin.id) && <button className="btn" disabled={installing !== null} onClick={() => void install(plugin)}>{installing === plugin.id ? 'Installing…' : 'Install'}</button>}
+                <button className="plugin-details-link" onClick={(event) => { event.stopPropagation(); setDetails(plugin); }}>View details</button>
+                {!installedIds.has(plugin.id) && <button className="btn" disabled={installing !== null} onClick={(event) => { event.stopPropagation(); void install(plugin); }}>{installing === plugin.id ? 'Installing…' : 'Install'}</button>}
               </div>
             </article>
           ))}
+          {visible.length < filtered.length && <button className="btn secondary plugin-load-more" onClick={() => setVisibleCount((count) => count + 100)}>Load 100 more</button>}
           {!loading && !error && !filtered.length && <div className="plugin-empty">No community plugin matches your search.</div>}
         </div>
+        {details && <PluginDetails plugin={details} installed={installedIds.has(details.id)} installing={installing === details.id} onInstall={() => void install(details)} onClose={() => setDetails(null)} />}
       </div>
     </div>
   );
 }
 
-function PluginDetails({ plugin, onClose }: { plugin: any; onClose: () => void }) {
+function formatDownloads(value: number | undefined): string {
+  return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value ?? 0);
+}
+
+function formatPluginDate(value: number): string {
+  return new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(value));
+}
+
+function PluginDetails({ plugin, installed = false, installing = false, onInstall, onClose }: { plugin: any; installed?: boolean; installing?: boolean; onInstall?: () => void; onClose: () => void }) {
   return (
     <div className="plugin-browser-backdrop" onClick={onClose}>
       <div className="plugin-details" onClick={(event) => event.stopPropagation()}>
         <button className="icon-button plugin-details-close" onClick={onClose}><Icon name="x" size={18} /></button>
         <h2>{plugin.name}</h2>
-        <div className="plugin-detail-meta">Version {plugin.version}{plugin.author ? ` · By ${plugin.author}` : ''}</div>
+        <div className="plugin-detail-meta">{plugin.version ? `Version ${plugin.version} · ` : ''}{plugin.author ? `By ${plugin.author}` : 'Community plugin'}</div>
+        {typeof plugin.downloads === 'number' && <div className="plugin-detail-stats"><span><Icon name="download" size={15} />{plugin.downloads.toLocaleString()} downloads</span>{plugin.updated && <span>Updated {formatPluginDate(plugin.updated)}</span>}</div>}
         <p>{plugin.description || 'No description provided.'}</p>
         <div className="plugin-detail-id">Plugin ID: <code>{plugin.id}</code></div>
+        {plugin.repo && <div className="plugin-detail-repo">Repository: <a href={`https://github.com/${plugin.repo}`} target="_blank" rel="noreferrer">{plugin.repo}</a></div>}
+        {onInstall && <div className="plugin-detail-actions">{installed ? <span className="plugin-installed-badge">Installed</span> : <button className="btn" disabled={installing} onClick={onInstall}>{installing ? 'Installing…' : 'Install'}</button>}</div>}
       </div>
     </div>
   );

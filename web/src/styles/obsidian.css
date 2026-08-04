@@ -1021,21 +1021,33 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 .plugin-browser-titlebar .icon-button { position: absolute; right: 8px; }
 .plugin-browser-toolbar { padding: 12px 16px 14px; border-bottom: 1px solid var(--bg-modifier-border); }
 .community-search { width: min(420px, 100%); background: var(--bg-secondary); }
-.installed-only { display: flex; align-items: center; gap: 10px; margin-top: 9px; color: var(--text-muted); font-size: 12px; }
+.plugin-browser-filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 9px; }
+.installed-only { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 12px; }
+.plugin-sort { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; }
+.plugin-sort select { padding: 5px 28px 5px 8px; border: 1px solid var(--bg-modifier-border); border-radius: var(--radius-s); background: var(--bg-secondary); color: var(--text-normal); }
 .community-count { color: var(--text-faint); font-size: 12px; margin-top: 9px; }
 .plugin-browser-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 16px; color: #e5534b; background: color-mix(in srgb, #e5534b 10%, transparent); }
 .plugin-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 12px; overflow-y: auto; align-content: start; }
-.plugin-card { min-height: 168px; display: flex; flex-direction: column; padding: 14px; border: 1px solid var(--bg-modifier-border); border-radius: 9px; background: var(--bg-secondary); }
+.plugin-card { min-height: 190px; display: flex; flex-direction: column; padding: 14px; border: 1px solid var(--bg-modifier-border); border-radius: 9px; background: var(--bg-secondary); cursor: pointer; }
+.plugin-card:hover, .plugin-card:focus-visible { border-color: var(--interactive-accent); outline: none; }
 .plugin-card-title { display: flex; align-items: center; gap: 6px; }
 .plugin-card-title span { padding: 2px 5px; border-radius: 4px; background: var(--interactive-accent); color: var(--text-on-accent); font-size: 8px; font-weight: 700; }
 .plugin-card-author { color: var(--text-muted); font-size: 11px; margin-top: 4px; }
 .plugin-card p { flex: 1; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
+.plugin-card-stats { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 10px; color: var(--text-faint); font-size: 10px; }
+.plugin-card-stats span, .plugin-detail-stats span { display: flex; align-items: center; gap: 4px; }
 .plugin-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.plugin-card-footer a { color: var(--text-accent); font-size: 11px; text-decoration: none; }
+.plugin-details-link { padding: 0; border: 0; background: transparent; color: var(--text-accent); font-size: 11px; cursor: pointer; }
 .plugin-card-footer .btn { padding: 5px 10px; font-size: 11px; }
+.plugin-load-more { grid-column: 1 / -1; justify-self: center; margin: 8px 0 14px; }
 .plugin-details { position: relative; width: min(480px, 90vw); padding: 28px; border: 1px solid var(--bg-modifier-border); border-radius: 10px; background: var(--bg-primary); box-shadow: var(--shadow); }
 .plugin-details-close { position: absolute; top: 8px; right: 8px; }
 .plugin-detail-meta, .plugin-detail-id { color: var(--text-muted); font-size: 12px; }
+.plugin-detail-stats { display: flex; gap: 18px; margin-top: 14px; color: var(--text-muted); font-size: 12px; }
+.plugin-detail-repo { margin-top: 8px; color: var(--text-muted); font-size: 12px; }
+.plugin-detail-repo a { color: var(--text-accent); text-decoration: none; }
+.plugin-detail-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
+.plugin-installed-badge { padding: 5px 9px; border-radius: 5px; background: var(--interactive-accent); color: var(--text-on-accent); font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .plugin-details p { line-height: 1.55; }
 
 @media (max-width: 900px) {
@@ -1045,6 +1057,7 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
   .installed-plugin { align-items: flex-start; }
   .plugin-grid { grid-template-columns: 1fr; }
   .plugin-browser { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
+  .plugin-browser-filters { align-items: flex-start; flex-direction: column; }
 }
 
 /* Login */

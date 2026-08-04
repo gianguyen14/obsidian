@@ -99,7 +99,17 @@ test('security-sensitive setup, session and vault boundaries', async () => {
       author: 'WebObsidian',
       description: 'Integration fixture',
       repo: 'webobsidian/catalog-smoke',
+    }, {
+      id: 'catalog-second',
+      name: 'Catalog second',
+      author: 'WebObsidian',
+      description: 'Lower-ranked integration fixture',
+      repo: 'webobsidian/catalog-second',
     }]))}`,
+    COMMUNITY_PLUGIN_STATS_URL: `data:application/json,${encodeURIComponent(JSON.stringify({
+      'catalog-smoke': { downloads: 1200, updated: 1785758400000, '1.0.0': 1200 },
+      'catalog-second': { downloads: 25, updated: 1785672000000, '1.0.0': 25 },
+    }))}`,
     NODE_ENV: 'production',
   });
   await waitForHealth(base, child);
@@ -271,13 +281,26 @@ test('security-sensitive setup, session and vault boundaries', async () => {
   for (const pathname of ['/api/plugins/?view=catalog', '/api/plugins/catalog']) {
     const catalog = await jsonRequest(base, pathname, { headers: { Cookie: oldCookie } });
     assert.equal(catalog.status, 200);
-    assert.deepEqual((await catalog.json() as { plugins: unknown[] }).plugins, [{
-      id: 'catalog-smoke',
-      name: 'Catalog smoke',
-      author: 'WebObsidian',
-      description: 'Integration fixture',
-      repo: 'webobsidian/catalog-smoke',
-    }]);
+    assert.deepEqual((await catalog.json() as { plugins: unknown[] }).plugins, [
+      {
+        id: 'catalog-smoke',
+        name: 'Catalog smoke',
+        author: 'WebObsidian',
+        description: 'Integration fixture',
+        repo: 'webobsidian/catalog-smoke',
+        downloads: 1200,
+        updated: 1785758400000,
+      },
+      {
+        id: 'catalog-second',
+        name: 'Catalog second',
+        author: 'WebObsidian',
+        description: 'Lower-ranked integration fixture',
+        repo: 'webobsidian/catalog-second',
+        downloads: 25,
+        updated: 1785672000000,
+      },
+    ]);
   }
   assert.equal((await installedPlugins.json() as { plugins: { id: string }[] }).plugins[0]?.id, 'runtime-smoke');
   const enabledPlugin = await jsonRequest(base, '/api/plugins/runtime-smoke/enabled', {

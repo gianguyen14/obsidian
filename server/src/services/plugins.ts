@@ -29,12 +29,26 @@ export interface InstalledPlugin extends PluginManifest {
   dir: string; // vault-relative
 }
 
-export interface CommunityPlugin extends PluginManifest {
+export interface CommunityPlugin {
+  id: string;
+  name: string;
+  author?: string;
+  description?: string;
   repo: string;
+  downloads: number;
+  updated: number | null;
+}
+
+interface CommunityPluginStats {
+  downloads?: number;
+  updated?: number;
+  [version: string]: number | undefined;
 }
 
 const COMMUNITY_CATALOG_URL = process.env.COMMUNITY_PLUGIN_CATALOG_URL
   ?? 'https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugins.json';
+const COMMUNITY_PLUGIN_STATS_URL = process.env.COMMUNITY_PLUGIN_STATS_URL
+  ?? 'https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugin-stats.json';
 let catalogCache: { expiresAt: number; plugins: CommunityPlugin[] } | null = null;
 
 async function pluginsDir(): Promise<string> {
@@ -86,19 +100,33 @@ export async function listInstalled(): Promise<InstalledPlugin[]> {
   return out;
 }
 
-/** Official Obsidian community plugin catalog, cached to avoid a GitHub request
- * every time the Browse window is opened. */
+/** Official Obsidian community plugin catalog enriched with official download
+ * statistics. Both documents use the plugin id as their stable join key. */
 export async function listCommunityPlugins(): Promise<CommunityPlugin[]> {
   if (catalogCache && catalogCache.expiresAt > Date.now()) return catalogCache.plugins;
-  const response = await fetch(COMMUNITY_CATALOG_URL, {
+  const request = (url: string, label: string) => fetch(url, {
     headers: { 'User-Agent': 'WebObsidian' },
     signal: AbortSignal.timeout(15_000),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`${label} failed: ${response.status}`);
+    return response.json();
   });
-  if (!response.ok) throw new Error(`Community plugin catalog failed: ${response.status}`);
-  const raw = await response.json() as CommunityPlugin[];
+  const [raw, stats] = await Promise.all([
+    request(COMMUNITY_CATALOG_URL, 'Community plugin catalog') as Promise<Array<Omit<CommunityPlugin, 'downloads' | 'updated'>>>,
+    request(COMMUNITY_PLUGIN_STATS_URL, 'Community plugin statistics') as Promise<Record<string, CommunityPluginStats>>,
+  ]);
   const plugins = raw
     .filter((plugin) => plugin?.id && plugin?.name && plugin?.repo)
-    .map((plugin) => ({ ...plugin, id: assertSafeId(plugin.id) }));
+    .map((plugin) => {
+      const pluginStats = stats[plugin.id];
+      return {
+        ...plugin,
+        id: assertSafeId(plugin.id),
+        downloads: Number.isFinite(pluginStats?.downloads) ? pluginStats.downloads! : 0,
+        updated: Number.isFinite(pluginStats?.updated) ? pluginStats.updated! : null,
+      };
+    })
+    .sort((left, right) => right.downloads - left.downloads || left.name.localeCompare(right.name));
   catalogCache = { expiresAt: Date.now() + 15 * 60_000, plugins };
   return plugins;
 }

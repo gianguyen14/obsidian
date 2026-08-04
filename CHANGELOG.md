@@ -1,5 +1,8 @@
 # Changelog
 
+- Community Plugins Browse now merges Obsidian's complete official catalog with
+  official download statistics, ranks plugins by popularity, and provides
+  sorting, download/update metadata, incremental rendering and detail views.
 - Fixed Community Plugins Browse returning a proxy-level `404 Not Found` by loading the catalog through the established plugins collection endpoint, with retry UI and route regression coverage.
 
 All notable changes to WebObsidian are documented here. This project tracks its product
