@@ -23,10 +23,12 @@ communityPluginsRouter.get('/:id/readme', asyncHandler(async (req, res) => {
 
 pluginsRouter.get('/', asyncHandler(async (req, res) => {
   // Keep catalog discovery on the same endpoint that lists installed plugins.
-  // Some reverse proxies only forward the exact `/api/plugins/` location and
-  // return their own 404 for deeper paths such as `/api/plugins/catalog`.
-  if (req.query.view === 'catalog') {
-    res.json({ plugins: await plugins.listCommunityPlugins() });
+  // Some reverse proxies only forward the exact `/api/plugins/` location. Use
+  // a request header for Browse so a proxy dropping the query string cannot
+  // silently turn the catalog into the installed-plugin list.
+  if (req.get('X-WebObsidian-Plugin-View') === 'catalog' || req.query.view === 'catalog') {
+    const catalog = await plugins.listCommunityPlugins();
+    res.json({ plugins: catalog, total: catalog.length, source: 'obsidian-community' });
     return;
   }
   res.json({ plugins: await plugins.listInstalled() });
@@ -34,8 +36,17 @@ pluginsRouter.get('/', asyncHandler(async (req, res) => {
 
 pluginsRouter.get(
   '/catalog',
-  asyncHandler(async (_req, res) => res.json({ plugins: await plugins.listCommunityPlugins() })),
+  asyncHandler(async (_req, res) => {
+    const catalog = await plugins.listCommunityPlugins();
+    res.json({ plugins: catalog, total: catalog.length, source: 'obsidian-community' });
+  }),
 );
+
+// Alias README through the established /api/plugins router. Deployments that
+// whitelist this API prefix can use Browse without adding a proxy location.
+pluginsRouter.get('/:id/readme', asyncHandler(async (req, res) => {
+  res.json({ readme: await plugins.getCommunityPluginReadme(req.params.id) });
+}));
 
 pluginsRouter.post(
   '/install',

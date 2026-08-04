@@ -310,17 +310,18 @@ export const api = {
 
   // plugins
   listPlugins: () => req<{ plugins: any[] }>('/api/plugins/'),
-  // Keep catalog discovery separate from the installed-plugin endpoint. Query
-  // parameters are easy for a reverse proxy to drop, which used to silently
-  // turn Browse into another copy of the installed plugin list.
-  listCommunityPlugins: () => req<{ plugins: any[]; total: number; source: string }>('/api/community-plugins/'),
+  // Use the already-established collection route with an explicit header.
+  // This survives reverse proxies that reject a new path or drop query strings.
+  listCommunityPlugins: () => req<{ plugins: any[]; total: number; source: string }>('/api/plugins/', {
+    headers: { 'X-WebObsidian-Plugin-View': 'catalog' },
+  }),
   getCommunityPluginReadme: (id: string) => req<{ readme: {
     repo: string;
     markdown: string | null;
     path: string | null;
     sourceUrl: string;
     assetBaseUrl: string;
-  } }>(`/api/community-plugins/${encodeURIComponent(id)}/readme`),
+  } }>(`/api/plugins/${encodeURIComponent(id)}/readme`),
   installPlugin: (repo: string) =>
     req<{ plugin: any }>('/api/plugins/install', { method: 'POST', body: JSON.stringify({ repo }) }),
   setPluginEnabled: (id: string, enabled: boolean) =>
