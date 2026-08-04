@@ -17,6 +17,7 @@ optional `styles.css`, and `data.json` layout as Obsidian.
 - Workspace: active file, file-open events, main/left/right leaves, docked sidebar
   views, custom `ItemView` registration, and extension-to-view registration.
 - UI: commands/default hotkeys, actionable ribbon buttons, status-bar items, modal/notice/menu,
+  Obsidian 1.13 confirmation dialogs,
   settings tabs, `Setting` visibility/headings, extra buttons, input suggestions, setting
   groups/pages, and common input components. A plugin settings exception is isolated and
   shown in the settings panel instead of blanking the application.
@@ -36,6 +37,8 @@ optional `styles.css`, and `data.json` layout as Obsidian.
   extension registration and `EditorSuggest` are reported as partial compatibility.
 - Bases view registrations are accepted so plugins can initialize, but WebObsidian does
   not yet provide Obsidian's complete `.base` query engine or custom Bases view host.
+- CLI handlers are accepted so plugins can initialize, but WebObsidian has no desktop
+  command-line process from which to invoke them.
 - Markdown post-processors run in Reading view. Live Preview remains WebObsidian's own
   CodeMirror renderer.
 - `requestUrl()` uses browser `fetch`; the destination must allow CORS.
@@ -68,8 +71,8 @@ publisher and source you trust: a loaded plugin can read and modify the vault.
 ## Verified plugin releases
 
 The compatibility regression suite evaluates and runs `onload()` from the published
-bundles for Breadcrumbs 4.21.9, Notebook Navigator 3.3.0, TaskNotes 4.11.1, and
-Excalidraw 2.25.3. It also clicks Notebook Navigator's published ribbon action and
+bundles for Breadcrumbs 4.21.9, Notebook Navigator 3.3.0, TaskNotes 4.11.1,
+Excalidraw 2.25.3, and Templater 2.24.3. It also clicks Notebook Navigator's published ribbon action and
 verifies that its real `ItemView` opens in the left sidebar. The settings regression
 suite renders the published Tasks 8.3.0 and Calendar 1.5.10 settings tabs and verifies
 their actual controls are created. Passing these checks means the tested plugin surface

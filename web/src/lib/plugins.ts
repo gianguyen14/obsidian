@@ -126,12 +126,60 @@ function contributionId(pluginId: string, kind: string): string {
 // ---- Obsidian DOM helpers -------------------------------------------------
 
 let domHelpersInstalled = false;
+
+/**
+ * Obsidian still exposes a small CodeMirror 5 compatibility global. Templater
+ * registers its bundled legacy modes at module-evaluation time even when its
+ * CM6 syntax highlighter is disabled, so the registration surface must exist
+ * before community plugin code runs.
+ */
+function installLegacyCodeMirrorShim(): void {
+  const activeWindow = window as any;
+  if (activeWindow.CodeMirror) return;
+  const modes = new Map<string, AnyFn>();
+  const mimes = new Map<string, any>();
+  const helpers = new Map<string, Map<string, any>>();
+  const nullMode = {
+    name: 'null',
+    startState: () => ({}),
+    token(stream: any) { stream?.skipToEnd?.(); return null; },
+  };
+
+  activeWindow.CodeMirror = {
+    Pass: Symbol('CodeMirror.Pass'),
+    defineMode(name: string, factory: AnyFn) { modes.set(name, factory); },
+    defineMIME(mime: string, spec: any) { mimes.set(mime, spec); },
+    registerHelper(type: string, name: string, value: any) {
+      const group = helpers.get(type) ?? new Map<string, any>();
+      group.set(name, value);
+      helpers.set(type, group);
+    },
+    getMode(config: any, requested: any) {
+      let spec = typeof requested === 'string' ? (mimes.get(requested) ?? requested) : requested;
+      const name = typeof spec === 'string' ? spec : spec?.name;
+      const factory = modes.get(name);
+      if (!factory) return nullMode;
+      const mode = factory(config ?? {}, spec ?? {});
+      if (mode && !mode.name) mode.name = name;
+      return mode;
+    },
+    startState(mode: any, ...args: any[]) { return mode?.startState ? mode.startState(...args) : {}; },
+    copyState(mode: any, state: any) {
+      if (mode?.copyState) return mode.copyState(state);
+      if (state && typeof state === 'object') return Array.isArray(state) ? [...state] : { ...state };
+      return state;
+    },
+  };
+}
+
 function installDomHelpers(): void {
   if (domHelpersInstalled) return;
   domHelpersInstalled = true;
+  installLegacyCodeMirrorShim();
   const nodeProto = Node.prototype as any;
   const elementProto = Element.prototype as any;
   const htmlProto = HTMLElement.prototype as any;
+  const fragmentProto = DocumentFragment.prototype as any;
   const eventProto = Event.prototype as any;
   const define = (target: object, name: string, value: AnyFn | PropertyDescriptor) => {
     if (name in target) return;
@@ -148,11 +196,19 @@ function installDomHelpers(): void {
   activeWindow.moment = moment;
   activeWindow.sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
   activeWindow.nextFrame = () => new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
+  activeWindow.createEl = createEl;
+  activeWindow.createDiv = createDiv;
+  activeWindow.createSpan = createSpan;
+  activeWindow.createFragment = createFragment;
   (globalThis as any).activeWindow = window;
   (globalThis as any).activeDocument = document;
   (globalThis as any).moment = moment;
   (globalThis as any).sleep = activeWindow.sleep;
   (globalThis as any).nextFrame = activeWindow.nextFrame;
+  (globalThis as any).createEl = createEl;
+  (globalThis as any).createDiv = createDiv;
+  (globalThis as any).createSpan = createSpan;
+  (globalThis as any).createFragment = createFragment;
   (globalThis as any).app = sharedApp;
 
   define(Object, 'isEmpty', (value: Record<string, unknown>) => !value || Object.keys(value).length === 0);
@@ -261,6 +317,9 @@ function installDomHelpers(): void {
   define(htmlProto, 'createDiv', function (this: HTMLElement, options?: any) { return create.call(this, 'div', options); });
   define(htmlProto, 'createSpan', function (this: HTMLElement, options?: any) { return create.call(this, 'span', options); });
   define(htmlProto, 'createSvg', createSvg);
+  define(fragmentProto, 'createEl', create);
+  define(fragmentProto, 'createDiv', function (this: DocumentFragment, options?: any) { return create.call(this as any, 'div', options); });
+  define(fragmentProto, 'createSpan', function (this: DocumentFragment, options?: any) { return create.call(this as any, 'span', options); });
   define(htmlProto, 'show', function (this: HTMLElement) { this.style.display = ''; return this; });
   define(htmlProto, 'hide', function (this: HTMLElement) { this.style.display = 'none'; return this; });
   define(htmlProto, 'toggle', function (this: HTMLElement, show: boolean) { this.style.display = show ? '' : 'none'; return this; });
@@ -1171,6 +1230,72 @@ export class ButtonComponent extends ValueComponent<never> {
 export class ExtraButtonComponent extends ButtonComponent {
   extraSettingsEl = this.buttonEl;
 }
+
+/**
+ * Button hosted by Obsidian's confirmation modal. Unlike a regular
+ * ButtonComponent it closes the owning modal after its handler resolves. A
+ * truthy handler result keeps the modal open so plugins can surface validation
+ * errors without rebuilding the dialog.
+ */
+export class ConfirmationButton extends ButtonComponent {
+  constructor(containerEl: HTMLElement, private owner: ConfirmationModal) { super(containerEl); }
+
+  override onClick(handler: (event: MouseEvent) => unknown | Promise<unknown>): this {
+    this.buttonEl.addEventListener('click', async (event) => {
+      const keepOpen = await handler(event);
+      if (!keepOpen) this.owner.close();
+    });
+    return this;
+  }
+
+  setInitialFocus(): this { this.owner.setInitialFocusButton(this); return this; }
+  setSecondary(): this { this.buttonEl.classList.add('mod-secondary'); return this; }
+  setCancel(): this { this.buttonEl.classList.add('mod-cancel'); return this; }
+}
+
+/** Public Obsidian 1.13 confirmation-dialog surface used by Templater 2.24+. */
+export class ConfirmationModal extends Modal {
+  buttonContainerEl = document.createElement('div');
+  private initialFocusButton: ConfirmationButton | null = null;
+
+  constructor(app: App) {
+    super(app);
+    this.buttonContainerEl.className = 'modal-button-container';
+    this.modalEl.appendChild(this.buttonContainerEl);
+  }
+
+  addClass(cls: string): this { this.modalEl.classList.add(...splitClasses(cls)); return this; }
+
+  addCheckbox(label: string, callback: (value: boolean) => any | Promise<any>): this {
+    const wrapper = document.createElement('label');
+    wrapper.className = 'confirmation-modal-checkbox';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    const text = document.createElement('span');
+    text.textContent = label;
+    checkbox.addEventListener('change', () => void callback(checkbox.checked));
+    wrapper.append(checkbox, text);
+    this.buttonContainerEl.appendChild(wrapper);
+    return this;
+  }
+
+  addButton(callback: (button: ConfirmationButton) => any): this {
+    callback(new ConfirmationButton(this.buttonContainerEl, this));
+    return this;
+  }
+
+  addCancelButton(text = 'Cancel'): this {
+    return this.addButton((button) => button.setButtonText(text).setCancel().onClick(() => false));
+  }
+
+  setInitialFocusButton(button: ConfirmationButton): void { this.initialFocusButton = button; }
+
+  override open(): void {
+    super.open();
+    queueMicrotask(() => this.initialFocusButton?.buttonEl.focus());
+  }
+}
+
 export class SliderComponent extends ValueComponent<number> {
   sliderEl = document.createElement('input');
   constructor(containerEl: HTMLElement) { super(containerEl); this.sliderEl.type = 'range'; containerEl.appendChild(this.sliderEl); }
@@ -1470,6 +1595,9 @@ export abstract class Plugin extends Component {
   }
   registerEditorExtension(_extension: unknown): void { compatibilityWarning(this.manifest.id, 'CodeMirror editor extensions are not yet mounted'); }
   registerEditorSuggest(_suggest: unknown): void { compatibilityWarning(this.manifest.id, 'EditorSuggest is not yet mounted'); }
+  registerCliHandler(_command: string, _description: string, _flags: unknown, _handler: AnyFn): void {
+    compatibilityWarning(this.manifest.id, 'CLI handlers are unavailable in the web application');
+  }
   registerHoverLinkSource(_id: string, _info: unknown): void {}
   registerObsidianProtocolHandler(_action: string, _handler: AnyFn): void {}
   async loadData(): Promise<any> { return (await api.getPluginData(this.manifest.id)).data; }
@@ -1819,7 +1947,7 @@ const obsidianModule: Record<string, any> = {
   // CommonJS/ESM interop helpers emitted by bundlers probe this marker before
   // reading named exports. It is module metadata, not an Obsidian API member.
   __esModule: true,
-  App, Plugin, BaseComponent, Component, Events, Notice, Modal,
+  App, Plugin, BaseComponent, Component, Events, Notice, Modal, ConfirmationModal, ConfirmationButton,
   PopoverSuggest, AbstractInputSuggest, EditorSuggest, SuggestModal, FuzzySuggestModal,
   Menu, MenuItem, Setting, SettingGroup, SettingPage, PluginSettingTab,
   TextComponent, TextAreaComponent, SearchComponent, ToggleComponent,

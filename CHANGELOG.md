@@ -29,6 +29,8 @@ changes. The format is loosely based on [Keep a Changelog](https://keepachangelo
   `POST /api/files/copy` for recursive copy). *(PRD 0.9)*
 
 ### Changed
+- Added the Obsidian 1.13 confirmation-dialog, legacy CodeMirror registration, CLI-handler
+  and global DOM-helper contracts so Templater 2.24.3 can load and render its settings.
 - Replaced the production-incompatible `new Function` plugin loader with a same-origin
   CommonJS-to-ESM wrapper. Workspace CSP permits dynamic JavaScript/WebAssembly only
   while trusted community plugins are enabled; public shares remain strict.

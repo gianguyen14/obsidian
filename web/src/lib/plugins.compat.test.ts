@@ -7,6 +7,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PluginSettingsPanel } from '../components/Settings';
 import {
+  ConfirmationModal,
   getPluginApp,
   getPluginRuntimeSnapshot,
   initializePluginRuntime,
@@ -22,6 +23,7 @@ const bundleDir = process.env.PLUGIN_BUNDLE_DIR ?? '/tmp/webobsidian-plugin-audi
 const realBundlesAvailable = existsSync(bundleDir);
 const tasksBundlePath = process.env.TASKS_BUNDLE_PATH;
 const calendarBundlePath = process.env.CALENDAR_BUNDLE_PATH;
+const templaterBundlePath = process.env.TEMPLATER_BUNDLE_PATH;
 
 function runtimeRequire(pluginId: string, moduleName: string): any {
   return globalThis.__webObsidianRequire(pluginId, moduleName);
@@ -56,7 +58,7 @@ describe('community plugin compatibility runtime', () => {
     const obsidian = runtimeRequire('fixture', 'obsidian');
     const classNames = [
       'AbstractInputSuggest', 'BaseComponent', 'EditorSuggest', 'FileSystemAdapter',
-      'SettingGroup', 'SettingPage', 'WorkspaceSplit',
+      'ConfirmationButton', 'ConfirmationModal', 'SettingGroup', 'SettingPage', 'WorkspaceSplit',
     ];
     const helperNames = [
       'arrayBufferToBase64', 'base64ToArrayBuffer', 'getIconIds', 'getLanguage',
@@ -70,6 +72,38 @@ describe('community plugin compatibility runtime', () => {
     expect(interopImport.Plugin).toBe(Plugin);
     expect(obsidian.apiVersion).toBe('1.13.1');
     expect(() => obsidian.DefinitelyMissing).toThrow(/unsupported Obsidian API/);
+  });
+
+  it('implements Obsidian 1.13 confirmation modal controls', async () => {
+    const modal = new ConfirmationModal(getPluginApp()).setTitle('Confirm risky action');
+    let confirmed = false;
+    let confirmButton = document.createElement('button');
+
+    modal
+      .addClass('fixture-confirmation-modal')
+      .addCheckbox('I understand', (checked) => { confirmButton!.disabled = !checked; })
+      .addButton((button) => {
+        confirmButton = button.buttonEl;
+        button
+          .setButtonText('Enable')
+          .setCta()
+          .setDisabled(true)
+          .setInitialFocus()
+          .onClick(async () => { confirmed = true; });
+      })
+      .addCancelButton();
+
+    modal.open();
+    expect(modal.modalEl.classList.contains('fixture-confirmation-modal')).toBe(true);
+    expect(confirmButton.disabled).toBe(true);
+
+    const checkbox = modal.buttonContainerEl.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    checkbox.click();
+    expect(confirmButton.disabled).toBe(false);
+    confirmButton.click();
+
+    await vi.waitFor(() => expect(confirmed).toBe(true));
+    await vi.waitFor(() => expect(modal.containerEl.isConnected).toBe(false));
   });
 
   it('provides the browser modules externalized by Excalidraw and TaskNotes', () => {
@@ -380,6 +414,51 @@ describe.skipIf(!calendarBundlePath || !existsSync(calendarBundlePath))('Calenda
     } finally {
       app.workspace.onLayoutReady = onLayoutReady;
       try { plugin.unload(); } catch { /* a failed settings render may leave partial plugin state */ }
+      delete app.plugins.plugins[manifest.id];
+      delete app.plugins.manifests[manifest.id];
+      app.plugins.enabledPlugins.delete(manifest.id);
+    }
+  });
+});
+
+describe.skipIf(!templaterBundlePath || !existsSync(templaterBundlePath))('Templater plugin', () => {
+  it('evaluates and runs onload for the published Templater bundle', { timeout: 30_000 }, async () => {
+    const source = readFileSync(templaterBundlePath!, 'utf8');
+    const module = { exports: {} as any };
+    new Function('module', 'exports', 'require', source)(
+      module,
+      module.exports,
+      (name: string) => runtimeRequire('templater-obsidian', name),
+    );
+    const PluginClass = module.exports?.default ?? module.exports;
+    expect(typeof PluginClass).toBe('function');
+
+    const app = getPluginApp();
+    const manifest = {
+      id: 'templater-obsidian',
+      name: 'Templater',
+      version: '2.24.3',
+      author: 'SilentVoid',
+      description: '',
+      minAppVersion: '1.13.0',
+      dir: '.obsidian/plugins/templater-obsidian',
+      isDesktopOnly: false,
+    };
+    const plugin = new PluginClass(app, manifest);
+    app.plugins.plugins[manifest.id] = plugin;
+    app.plugins.manifests[manifest.id] = manifest;
+    app.plugins.enabledPlugins.add(manifest.id);
+    const onLayoutReady = app.workspace.onLayoutReady;
+    app.workspace.onLayoutReady = () => {};
+    try {
+      await plugin.loadAsync();
+      const tab = getPluginRuntimeSnapshot().settingTabs.find((item) => item.pluginId === manifest.id);
+      expect(tab).toBeTruthy();
+      tab!.tab.display();
+      expect(tab!.tab.containerEl.querySelectorAll('.setting-item').length).toBeGreaterThan(5);
+    } finally {
+      app.workspace.onLayoutReady = onLayoutReady;
+      try { plugin.unload(); } catch { /* a failed onload may leave partial plugin state */ }
       delete app.plugins.plugins[manifest.id];
       delete app.plugins.manifests[manifest.id];
       app.plugins.enabledPlugins.delete(manifest.id);
