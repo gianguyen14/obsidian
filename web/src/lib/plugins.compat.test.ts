@@ -2,19 +2,26 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { act, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PluginSettingsPanel } from '../components/Settings';
 import {
   getPluginApp,
   getPluginRuntimeSnapshot,
   initializePluginRuntime,
   ItemView,
   Plugin,
+  PluginSettingTab,
+  Setting,
   WorkspaceLeaf,
 } from './plugins';
 import { useStore } from './store';
 
 const bundleDir = process.env.PLUGIN_BUNDLE_DIR ?? '/tmp/webobsidian-plugin-audit.RaAYbg';
 const realBundlesAvailable = existsSync(bundleDir);
+const tasksBundlePath = process.env.TASKS_BUNDLE_PATH;
+const calendarBundlePath = process.env.CALENDAR_BUNDLE_PATH;
 
 function runtimeRequire(pluginId: string, moduleName: string): any {
   return globalThis.__webObsidianRequire(pluginId, moduleName);
@@ -130,6 +137,75 @@ describe('community plugin compatibility runtime', () => {
     expect(useStore.getState().pluginLeftPath).toBeNull();
     expect(getPluginRuntimeSnapshot().ribbonItems.some((item) => item.pluginId === 'ribbon-fixture')).toBe(false);
   });
+
+  it('renders plugin settings with the Obsidian DOM and component contracts', async () => {
+    const app = getPluginApp();
+    let shortcut: any;
+
+    class FixtureSettingsTab extends PluginSettingTab {
+      display(): void {
+        this.containerEl.replaceChildren();
+        const momentGlobal = (window as any).moment;
+        new Setting(this.containerEl)
+          .setName(`Today: ${momentGlobal('2026-08-04').format('YYYY-MM-DD')}`)
+          .setDesc('A visible setting')
+          .addDropdown((dropdown) => dropdown.addOption('emoji', 'Tasks Emoji Format').setValue('emoji'));
+        new Setting(this.containerEl).setName('Hidden setting').setVisibility(false);
+        new Setting(this.containerEl).setName('Actions').addExtraButton((button) => {
+          button.extraSettingsEl.classList.add('fixture-extra-button');
+          button.setIcon('settings').setTooltip('Configure');
+        });
+      }
+    }
+
+    class FixturePlugin extends Plugin {
+      onload(): void {
+        shortcut = this.app.scope.register([], 'Tab', () => false);
+        this.addSettingTab(new FixtureSettingsTab(this.app, this));
+      }
+      onunload(): void { this.app.scope.unregister(shortcut); }
+    }
+
+    const plugin = new FixturePlugin(app, { id: 'settings-fixture', name: 'Settings fixture' });
+    await plugin.loadAsync();
+    try {
+      const tab = getPluginRuntimeSnapshot().settingTabs.find((item) => item.pluginId === 'settings-fixture');
+      expect(tab).toBeTruthy();
+      tab!.tab.display();
+      expect(tab!.tab.containerEl.querySelectorAll('.setting-item')).toHaveLength(3);
+      expect(tab!.tab.containerEl.querySelector<HTMLElement>('.setting-item:nth-child(2)')?.hidden).toBe(true);
+      expect(tab!.tab.containerEl.querySelector('.fixture-extra-button')).toBeTruthy();
+      expect(tab!.tab.containerEl.querySelector('option')?.textContent).toBe('Tasks Emoji Format');
+    } finally {
+      plugin.unload();
+    }
+    expect(getPluginRuntimeSnapshot().settingTabs.some((item) => item.pluginId === 'settings-fixture')).toBe(false);
+  });
+
+  it('shows a recoverable error instead of blanking settings when a plugin display fails', async () => {
+    const app = getPluginApp();
+    class BrokenSettingsTab extends PluginSettingTab {
+      display(): void { throw new Error('Unsupported fixture setting'); }
+    }
+    class FixturePlugin extends Plugin { onload(): void {} }
+    const plugin = new FixturePlugin(app, { id: 'broken-settings-fixture', name: 'Broken settings fixture' });
+    const tab = new BrokenSettingsTab(app, plugin);
+    const contribution = { id: 'broken-settings-fixture:settings', pluginId: plugin.manifest.id, name: 'Broken settings', tab };
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await act(async () => { root.render(createElement(PluginSettingsPanel, { tab: contribution })); });
+      expect(container.textContent).toContain("Could not render this plugin's settings.");
+      expect(container.textContent).toContain('Unsupported fixture setting');
+      expect(container.querySelector('.plugin-settings-error')).toBeTruthy();
+      expect(container.querySelector('.plugin-settings-host')).toBeTruthy();
+    } finally {
+      await act(async () => { root.unmount(); });
+      consoleError.mockRestore();
+    }
+  });
 });
 
 describe.skipIf(!realBundlesAvailable)('current plugin release bundles', () => {
@@ -218,6 +294,92 @@ describe.skipIf(!realBundlesAvailable)('current plugin release bundles', () => {
       delete app.plugins.plugins[fixture.id];
       delete app.plugins.manifests[fixture.id];
       app.plugins.enabledPlugins.delete(fixture.id);
+    }
+  });
+});
+
+describe.skipIf(!tasksBundlePath || !existsSync(tasksBundlePath))('Tasks plugin settings', () => {
+  it('renders the real Tasks settings tab', { timeout: 30_000 }, async () => {
+    const source = readFileSync(tasksBundlePath!, 'utf8');
+    const module = { exports: {} as any };
+    new Function('module', 'exports', 'require', source)(
+      module,
+      module.exports,
+      (name: string) => runtimeRequire('obsidian-tasks-plugin', name),
+    );
+    const PluginClass = module.exports?.default ?? module.exports;
+    const app = getPluginApp();
+    const manifest = {
+      id: 'obsidian-tasks-plugin',
+      name: 'Tasks',
+      version: '8.3.0',
+      author: 'Compatibility test',
+      description: '',
+      minAppVersion: '1.0.0',
+      dir: '.obsidian/plugins/obsidian-tasks-plugin',
+      isDesktopOnly: false,
+    };
+    const plugin = new PluginClass(app, manifest);
+    app.plugins.plugins[manifest.id] = plugin;
+    app.plugins.manifests[manifest.id] = manifest;
+    app.plugins.enabledPlugins.add(manifest.id);
+    const onLayoutReady = app.workspace.onLayoutReady;
+    app.workspace.onLayoutReady = () => {};
+    try {
+      await plugin.loadAsync();
+      const tab = getPluginRuntimeSnapshot().settingTabs.find((item) => item.pluginId === manifest.id);
+      expect(tab).toBeTruthy();
+      tab!.tab.display();
+      expect(tab!.tab.containerEl.querySelectorAll('.setting-item').length).toBeGreaterThan(5);
+    } finally {
+      app.workspace.onLayoutReady = onLayoutReady;
+      try { plugin.unload(); } catch { /* a failed settings render may leave partial plugin state */ }
+      delete app.plugins.plugins[manifest.id];
+      delete app.plugins.manifests[manifest.id];
+      app.plugins.enabledPlugins.delete(manifest.id);
+    }
+  });
+});
+
+describe.skipIf(!calendarBundlePath || !existsSync(calendarBundlePath))('Calendar plugin settings', () => {
+  it('renders the real Calendar settings tab', { timeout: 30_000 }, async () => {
+    const source = readFileSync(calendarBundlePath!, 'utf8');
+    const module = { exports: {} as any };
+    new Function('module', 'exports', 'require', source)(
+      module,
+      module.exports,
+      (name: string) => runtimeRequire('calendar', name),
+    );
+    const PluginClass = module.exports?.default ?? module.exports;
+    const app = getPluginApp();
+    const manifest = {
+      id: 'calendar',
+      name: 'Calendar',
+      version: '1.5.10',
+      author: 'Compatibility test',
+      description: '',
+      minAppVersion: '0.9.11',
+      dir: '.obsidian/plugins/calendar',
+      isDesktopOnly: false,
+    };
+    const plugin = new PluginClass(app, manifest);
+    app.plugins.plugins[manifest.id] = plugin;
+    app.plugins.manifests[manifest.id] = manifest;
+    app.plugins.enabledPlugins.add(manifest.id);
+    const onLayoutReady = app.workspace.onLayoutReady;
+    app.workspace.onLayoutReady = () => {};
+    try {
+      await plugin.loadAsync();
+      const tab = getPluginRuntimeSnapshot().settingTabs.find((item) => item.pluginId === manifest.id);
+      expect(tab).toBeTruthy();
+      tab!.tab.display();
+      expect(tab!.tab.containerEl.querySelectorAll('.setting-item').length).toBeGreaterThan(3);
+    } finally {
+      app.workspace.onLayoutReady = onLayoutReady;
+      try { plugin.unload(); } catch { /* a failed settings render may leave partial plugin state */ }
+      delete app.plugins.plugins[manifest.id];
+      delete app.plugins.manifests[manifest.id];
+      app.plugins.enabledPlugins.delete(manifest.id);
     }
   });
 });

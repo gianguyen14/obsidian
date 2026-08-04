@@ -145,10 +145,12 @@ function installDomHelpers(): void {
   const activeWindow = window as any;
   activeWindow.activeWindow = window;
   activeWindow.activeDocument = document;
+  activeWindow.moment = moment;
   activeWindow.sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
   activeWindow.nextFrame = () => new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
   (globalThis as any).activeWindow = window;
   (globalThis as any).activeDocument = document;
+  (globalThis as any).moment = moment;
   (globalThis as any).sleep = activeWindow.sleep;
   (globalThis as any).nextFrame = activeWindow.nextFrame;
   (globalThis as any).app = sharedApp;
@@ -447,7 +449,15 @@ function abstractFile(path: string): TAbstractFile | null {
 export class Vault extends Events {
   configDir = '.obsidian';
   adapter = new VaultAdapter(this);
+  static recurseChildren(root: TAbstractFile, callback: (file: TAbstractFile) => void): void {
+    if (!(root instanceof TFolder)) return;
+    for (const child of root.children) {
+      callback(child);
+      Vault.recurseChildren(child, callback);
+    }
+  }
   getName(): string { return useStore.getState().tree?.name ?? 'WebObsidian'; }
+  getConfig(_key: string): unknown { return undefined; }
   getRoot(): TFolder { return buildAbstractTree(); }
   getFiles(): TFile[] { return flattenAbstract().filter((file): file is TFile => file instanceof TFile); }
   getMarkdownFiles(): TFile[] { return this.getFiles().filter((file) => /^(md|markdown)$/i.test(file.extension)); }
@@ -652,6 +662,7 @@ export class WorkspaceSplit extends WorkspaceParent {
 
 export class WorkspaceLeaf extends WorkspaceItem {
   readonly id = contributionId('workspace', 'leaf');
+  get app(): App { return sharedApp; }
   view: View;
   private state: any = { type: 'empty', state: {} };
   constructor(public region: 'main' | 'left' | 'right' = 'main') { super(); this.view = new EmptyView(this); }
@@ -706,9 +717,11 @@ export class WorkspaceLeaf extends WorkspaceItem {
 }
 
 export class View extends Component {
+  app: App;
   containerEl: HTMLElement;
   constructor(public leaf: WorkspaceLeaf) {
     super();
+    this.app = leaf.app;
     this.containerEl = document.createElement('div');
     this.containerEl.className = 'workspace-leaf-content plugin-view-content';
   }
@@ -1130,7 +1143,13 @@ export class ToggleComponent extends ValueComponent<boolean> {
 export class DropdownComponent extends ValueComponent<string> {
   selectEl = document.createElement('select');
   constructor(containerEl: HTMLElement) { super(containerEl); this.selectEl.className = 'text-input'; containerEl.appendChild(this.selectEl); }
-  addOption(value: string, display: string): this { this.selectEl.add(new Option(display, value)); return this; }
+  addOption(value: string, display: string): this {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = display;
+    this.selectEl.appendChild(option);
+    return this;
+  }
   addOptions(options: Record<string, string>): this { Object.entries(options).forEach(([value, display]) => this.addOption(value, display)); return this; }
   getValue(): string { return this.selectEl.value; }
   setValue(value: string): this { this.selectEl.value = value; return this; }
@@ -1149,7 +1168,9 @@ export class ButtonComponent extends ValueComponent<never> {
   onClick(callback: (event: MouseEvent) => any): this { this.buttonEl.addEventListener('click', callback); return this; }
   override setDisabled(value: boolean): this { super.setDisabled(value); this.buttonEl.disabled = value; return this; }
 }
-export class ExtraButtonComponent extends ButtonComponent {}
+export class ExtraButtonComponent extends ButtonComponent {
+  extraSettingsEl = this.buttonEl;
+}
 export class SliderComponent extends ValueComponent<number> {
   sliderEl = document.createElement('input');
   constructor(containerEl: HTMLElement) { super(containerEl); this.sliderEl.type = 'range'; containerEl.appendChild(this.sliderEl); }
@@ -1189,6 +1210,7 @@ export class Setting {
   setDesc(value: string | DocumentFragment): this { setNodeContent(this.descEl, value); return this; }
   setClass(value: string): this { this.settingEl.classList.add(value); return this; }
   setTooltip(value: string): this { this.settingEl.title = value; return this; }
+  setVisibility(visible: boolean): this { this.settingEl.hidden = !visible; return this; }
   setErrorMessage(value: string | null): this {
     this.errorEl?.remove();
     this.errorEl = null;
@@ -1463,9 +1485,13 @@ export class App {
   vault = new Vault();
   workspace = new Workspace();
   metadataCache = new MetadataCache();
+  metadataTypeManager = {
+    getAllProperties: () => ({} as Record<string, { type?: string }>),
+    setType: (_property: string, _type: string) => {},
+  };
   fileManager = new FileManager(this);
   keymap = {};
-  scope = {};
+  scope: Scope;
   setting = {
     open: () => useStore.getState().setSettings(true),
     openTabById: (_id: string) => useStore.getState().setSettings(true),
@@ -1482,10 +1508,15 @@ export class App {
     getPlugin: (id: string) => pluginInstances[id],
   };
   internalPlugins = {
+    plugins: {
+      'daily-notes': { enabled: false, instance: { options: {} } },
+    } as Record<string, any>,
+    getPluginById: (id: string) => this.internalPlugins.plugins[id] ?? null,
     getEnabledPluginById: (id: string) => id === 'bases'
       ? { registrations: basesViewRegistrations, manifest: { id: 'bases', version: apiVersion } }
       : null,
   };
+  constructor() { this.scope = new Scope(); }
   isDarkMode(): boolean { return document.documentElement.dataset.theme === 'dark' || document.body.classList.contains('theme-dark'); }
   loadLocalStorage(key: string): any | null {
     try {
@@ -1502,8 +1533,6 @@ export class App {
   }
   private localStorageKey(key: string): string { return `webobsidian:${this.vault.getName()}:${key}`; }
 }
-
-const sharedApp = new App();
 
 // ---- Icons + utilities ----------------------------------------------------
 
@@ -1578,6 +1607,9 @@ export class Scope {
   activate(): void { if (!this.active) { window.addEventListener('keydown', this.listener, true); this.active = true; } }
   deactivate(): void { if (this.active) { window.removeEventListener('keydown', this.listener, true); this.active = false; } }
 }
+
+const sharedApp = new App();
+
 export const Keymap = {
   isModEvent(event: KeyboardEvent | MouseEvent): boolean { return Platform.isMacOS ? event.metaKey : event.ctrlKey; },
   isModifier(modifier: string): boolean { return ['Mod', 'Ctrl', 'Meta', 'Shift', 'Alt'].includes(modifier); },

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
 import QRCode from 'qrcode';
 import { useStore } from '../lib/store';
@@ -84,17 +84,48 @@ const labels: Record<CoreSection, string> = {
   about: 'About',
 };
 
-function PluginSettingsPanel({ tab }: { tab?: PluginSettingContribution }) {
-  useEffect(() => {
+export function PluginSettingsPanel({ tab }: { tab?: PluginSettingContribution }) {
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+
+  useLayoutEffect(() => {
     if (!tab) return;
+    let active = true;
+    const reportError = (reason: unknown) => {
+      if (!active) return;
+      const message = reason instanceof Error ? reason.message : String(reason);
+      console.error(`[plugin:${tab.pluginId}] Settings tab failed`, reason);
+      setError(message || 'Unknown plugin settings error');
+    };
+
+    setError('');
     tab.tab.containerEl.replaceChildren();
-    tab.tab.display();
-    return () => tab.tab.hide();
-  }, [tab]);
+    try {
+      const result = (tab.tab.display as () => unknown)();
+      if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+        Promise.resolve(result).catch(reportError);
+      }
+    } catch (reason) {
+      reportError(reason);
+    }
+
+    return () => {
+      active = false;
+      try { tab.tab.hide(); }
+      catch (reason) { console.error(`[plugin:${tab.pluginId}] Settings tab cleanup failed`, reason); }
+    };
+  }, [attempt, tab]);
   if (!tab) return <div>Plugin settings are no longer available.</div>;
   return (
-    <div>
+    <div className="plugin-settings-panel">
       <h2>{tab.name}</h2>
+      {error && (
+        <div className="plugin-settings-error" role="alert">
+          <strong>Could not render this plugin's settings.</strong>
+          <span>{error}</span>
+          <button className="btn secondary" onClick={() => setAttempt((value) => value + 1)}>Try again</button>
+        </div>
+      )}
       <PluginDomMount el={tab.tab.containerEl} className="plugin-settings-host" />
     </div>
   );

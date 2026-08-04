@@ -902,7 +902,16 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 .plugin-sidebar-body > .plugin-view-host { height: 100%; }
 .plugin-view-loading, .plugin-view-error { padding: 24px; color: var(--text-muted); }
 .plugin-view-error { color: var(--text-error, #e5534b); }
-.plugin-settings-host > .plugin-setting-tab { width: 100%; }
+.plugin-settings-panel, .plugin-settings-host, .plugin-settings-host > .plugin-setting-tab { width: 100%; }
+.plugin-settings-error { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; margin: 0 0 14px;
+  padding: 12px 14px; color: var(--text-error, #e5534b); background: var(--background-modifier-error, rgba(229,83,75,.1));
+  border: 1px solid color-mix(in srgb, var(--text-error, #e5534b) 45%, transparent); border-radius: var(--radius); }
+.plugin-settings-error span { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.plugin-setting-tab .setting-item-heading { display: block; padding: 22px 0 8px; border-bottom: 0; }
+.plugin-setting-tab .setting-item-heading:first-child { padding-top: 6px; }
+.plugin-setting-tab .setting-item-heading .setting-item-name { font-size: 16px; }
+.plugin-setting-tab .setting-item-heading .setting-item-control { display: none; }
+.plugin-setting-tab .setting-item[hidden] { display: none; }
 .plugin-modal-bg { z-index: 1200; }
 .plugin-modal .modal-title { font-size: 20px; font-weight: 650; margin-bottom: 12px; }
 .plugin-notice { z-index: 1400; }

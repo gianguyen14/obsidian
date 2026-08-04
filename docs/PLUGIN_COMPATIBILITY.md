@@ -17,8 +17,9 @@ optional `styles.css`, and `data.json` layout as Obsidian.
 - Workspace: active file, file-open events, main/left/right leaves, docked sidebar
   views, custom `ItemView` registration, and extension-to-view registration.
 - UI: commands/default hotkeys, actionable ribbon buttons, status-bar items, modal/notice/menu,
-  settings tabs, `Setting`, input suggestions, setting groups/pages, and common input
-  components.
+  settings tabs, `Setting` visibility/headings, extra buttons, input suggestions, setting
+  groups/pages, and common input components. A plugin settings exception is isolated and
+  shown in the settings panel instead of blanking the application.
 - Markdown Reading view: post-processors and fenced code-block processors.
 - Plugin state in `.obsidian/plugins/<id>/data.json`.
 - Plugin-scoped local storage and public Bases view registration.
@@ -69,6 +70,8 @@ publisher and source you trust: a loaded plugin can read and modify the vault.
 The compatibility regression suite evaluates and runs `onload()` from the published
 bundles for Breadcrumbs 4.21.9, Notebook Navigator 3.3.0, TaskNotes 4.11.1, and
 Excalidraw 2.25.3. It also clicks Notebook Navigator's published ribbon action and
-verifies that its real `ItemView` opens in the left sidebar. Passing these checks means
-the plugin starts without a missing class, helper, or external-module failure;
+verifies that its real `ItemView` opens in the left sidebar. The settings regression
+suite renders the published Tasks 8.3.0 and Calendar 1.5.10 settings tabs and verifies
+their actual controls are created. Passing these checks means the tested plugin surface
+starts and renders without a missing class, helper, or external-module failure;
 individual features may still fall into the partial or unsupported categories above.
