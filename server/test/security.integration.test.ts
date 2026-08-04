@@ -283,9 +283,9 @@ test('security-sensitive setup, session and vault boundaries', async () => {
   const installedPlugins = await jsonRequest(base, '/api/plugins/', { headers: { Cookie: oldCookie } });
   assert.equal(installedPlugins.status, 200);
 
-  // Keep all catalog aliases working. Browse itself uses the exact installed
-  // plugin collection path plus a header so restrictive reverse proxies do not
-  // need a new location and cannot drop the catalog selector as a query string.
+  // Keep all catalog aliases working. Browse itself POSTs an action to the
+  // exact installed-plugin collection path so restrictive reverse proxies do
+  // not need a new location and cannot drop its selector.
   for (const pathname of ['/api/community-plugins/', '/api/plugins/?view=catalog', '/api/plugins/catalog']) {
     const catalog = await jsonRequest(base, pathname, { headers: { Cookie: oldCookie } });
     assert.equal(catalog.status, 200);
@@ -338,6 +338,15 @@ test('security-sensitive setup, session and vault boundaries', async () => {
     total: 2,
     source: 'obsidian-community',
   });
+  const actionCatalog = await jsonRequest(base, '/api/plugins/', {
+    method: 'POST',
+    headers: { Cookie: oldCookie },
+    body: JSON.stringify({ action: 'catalog' }),
+  });
+  assert.equal(actionCatalog.status, 200);
+  assert.deepEqual(await actionCatalog.json(), await (await jsonRequest(base, '/api/plugins/catalog', {
+    headers: { Cookie: oldCookie },
+  })).json());
   const communityCatalog = await jsonRequest(base, '/api/community-plugins/', { headers: { Cookie: oldCookie } });
   assert.deepEqual(await communityCatalog.json(), {
     plugins: [
@@ -376,11 +385,25 @@ test('security-sensitive setup, session and vault boundaries', async () => {
   });
   const pluginReadmeAlias = await jsonRequest(base, '/api/plugins/catalog-smoke/readme', { headers: { Cookie: oldCookie } });
   assert.equal(pluginReadmeAlias.status, 200);
-  assert.deepEqual(await pluginReadmeAlias.json(), await (await jsonRequest(
+  const pluginReadmeAliasPayload = await pluginReadmeAlias.json();
+  assert.deepEqual(pluginReadmeAliasPayload, await (await jsonRequest(
     base,
     '/api/community-plugins/catalog-smoke/readme',
     { headers: { Cookie: oldCookie } },
   )).json());
+  const pluginReadmeAction = await jsonRequest(base, '/api/plugins/', {
+    method: 'POST',
+    headers: { Cookie: oldCookie },
+    body: JSON.stringify({ action: 'readme', id: 'catalog-smoke' }),
+  });
+  assert.equal(pluginReadmeAction.status, 200);
+  assert.deepEqual(await pluginReadmeAction.json(), pluginReadmeAliasPayload);
+  const unknownPluginAction = await jsonRequest(base, '/api/plugins/', {
+    method: 'POST',
+    headers: { Cookie: oldCookie },
+    body: JSON.stringify({ action: 'unknown' }),
+  });
+  assert.equal(unknownPluginAction.status, 400);
   const unknownReadme = await jsonRequest(base, '/api/community-plugins/not-in-catalog/readme', { headers: { Cookie: oldCookie } });
   assert.equal(unknownReadme.status, 404);
   assert.equal((await installedPlugins.json() as { plugins: { id: string }[] }).plugins[0]?.id, 'runtime-smoke');

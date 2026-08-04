@@ -34,6 +34,25 @@ pluginsRouter.get('/', asyncHandler(async (req, res) => {
   res.json({ plugins: await plugins.listInstalled() });
 }));
 
+// Browse actions deliberately share the exact collection URL used by the
+// installed-plugin list. A few self-hosted reverse proxies only pass
+// `/api/plugins/` and strip either query strings or non-standard request
+// headers. POSTing a small JSON action survives those configurations and also
+// keeps README retrieval away from the vault-file route below.
+pluginsRouter.post('/', asyncHandler(async (req, res) => {
+  const action = String(req.body?.action ?? '');
+  if (action === 'catalog') {
+    const catalog = await plugins.listCommunityPlugins();
+    res.json({ plugins: catalog, total: catalog.length, source: 'obsidian-community' });
+    return;
+  }
+  if (action === 'readme') {
+    res.json({ readme: await plugins.getCommunityPluginReadme(String(req.body?.id ?? '')) });
+    return;
+  }
+  res.status(400).json({ error: 'Unknown plugin collection action' });
+}));
+
 pluginsRouter.get(
   '/catalog',
   asyncHandler(async (_req, res) => {

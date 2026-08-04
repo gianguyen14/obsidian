@@ -310,10 +310,12 @@ export const api = {
 
   // plugins
   listPlugins: () => req<{ plugins: any[] }>('/api/plugins/'),
-  // Use the already-established collection route with an explicit header.
-  // This survives reverse proxies that reject a new path or drop query strings.
+  // Use POST actions on the already-established collection URL. This survives
+  // reverse proxies that reject deeper paths, drop query strings or discard
+  // non-standard selector headers.
   listCommunityPlugins: () => req<{ plugins: any[]; total: number; source: string }>('/api/plugins/', {
-    headers: { 'X-WebObsidian-Plugin-View': 'catalog' },
+    method: 'POST',
+    body: JSON.stringify({ action: 'catalog' }),
   }),
   getCommunityPluginReadme: (id: string) => req<{ readme: {
     repo: string;
@@ -321,7 +323,10 @@ export const api = {
     path: string | null;
     sourceUrl: string;
     assetBaseUrl: string;
-  } }>(`/api/plugins/${encodeURIComponent(id)}/readme`),
+  } }>('/api/plugins/', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'readme', id }),
+  }),
   installPlugin: (repo: string) =>
     req<{ plugin: any }>('/api/plugins/install', { method: 'POST', body: JSON.stringify({ repo }) }),
   setPluginEnabled: (id: string, enabled: boolean) =>
