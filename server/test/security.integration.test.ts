@@ -110,6 +110,13 @@ test('security-sensitive setup, session and vault boundaries', async () => {
       'catalog-smoke': { downloads: 1200, updated: 1785758400000, '1.0.0': 1200 },
       'catalog-second': { downloads: 25, updated: 1785672000000, '1.0.0': 25 },
     }))}`,
+    COMMUNITY_PLUGIN_README_URL_TEMPLATE: `data:application/json,${encodeURIComponent(JSON.stringify({
+      content: Buffer.from('# Catalog smoke\n\n![Screenshot](docs/screenshot.png)\n\n[Guide](docs/guide.md)').toString('base64'),
+      encoding: 'base64',
+      path: 'README.md',
+      html_url: 'https://github.com/webobsidian/catalog-smoke/blob/main/README.md',
+      download_url: 'https://raw.githubusercontent.com/webobsidian/catalog-smoke/main/README.md',
+    }))}`,
     NODE_ENV: 'production',
   });
   await waitForHealth(base, child);
@@ -276,9 +283,9 @@ test('security-sensitive setup, session and vault boundaries', async () => {
   const installedPlugins = await jsonRequest(base, '/api/plugins/', { headers: { Cookie: oldCookie } });
   assert.equal(installedPlugins.status, 200);
 
-  // Browse uses the collection route because some production reverse proxies
-  // reject deeper plugin API paths. Keep the original endpoint working too.
-  for (const pathname of ['/api/plugins/?view=catalog', '/api/plugins/catalog']) {
+  // Browse has a dedicated static endpoint so dropping a query string can
+  // never silently return installed plugins. Keep both legacy routes working.
+  for (const pathname of ['/api/community-plugins/', '/api/plugins/?view=catalog', '/api/plugins/catalog']) {
     const catalog = await jsonRequest(base, pathname, { headers: { Cookie: oldCookie } });
     assert.equal(catalog.status, 200);
     assert.deepEqual((await catalog.json() as { plugins: unknown[] }).plugins, [
@@ -302,6 +309,44 @@ test('security-sensitive setup, session and vault boundaries', async () => {
       },
     ]);
   }
+  const communityCatalog = await jsonRequest(base, '/api/community-plugins/', { headers: { Cookie: oldCookie } });
+  assert.deepEqual(await communityCatalog.json(), {
+    plugins: [
+      {
+        id: 'catalog-smoke',
+        name: 'Catalog smoke',
+        author: 'WebObsidian',
+        description: 'Integration fixture',
+        repo: 'webobsidian/catalog-smoke',
+        downloads: 1200,
+        updated: 1785758400000,
+      },
+      {
+        id: 'catalog-second',
+        name: 'Catalog second',
+        author: 'WebObsidian',
+        description: 'Lower-ranked integration fixture',
+        repo: 'webobsidian/catalog-second',
+        downloads: 25,
+        updated: 1785672000000,
+      },
+    ],
+    total: 2,
+    source: 'obsidian-community',
+  });
+  const pluginReadme = await jsonRequest(base, '/api/community-plugins/catalog-smoke/readme', { headers: { Cookie: oldCookie } });
+  assert.equal(pluginReadme.status, 200);
+  assert.deepEqual(await pluginReadme.json(), {
+    readme: {
+      repo: 'webobsidian/catalog-smoke',
+      markdown: '# Catalog smoke\n\n![Screenshot](docs/screenshot.png)\n\n[Guide](docs/guide.md)',
+      path: 'README.md',
+      sourceUrl: 'https://github.com/webobsidian/catalog-smoke/blob/main/README.md',
+      assetBaseUrl: 'https://raw.githubusercontent.com/webobsidian/catalog-smoke/main/',
+    },
+  });
+  const unknownReadme = await jsonRequest(base, '/api/community-plugins/not-in-catalog/readme', { headers: { Cookie: oldCookie } });
+  assert.equal(unknownReadme.status, 404);
   assert.equal((await installedPlugins.json() as { plugins: { id: string }[] }).plugins[0]?.id, 'runtime-smoke');
   const enabledPlugin = await jsonRequest(base, '/api/plugins/runtime-smoke/enabled', {
     method: 'PATCH', headers: { Cookie: oldCookie }, body: JSON.stringify({ enabled: true }),

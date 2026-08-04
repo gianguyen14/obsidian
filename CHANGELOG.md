@@ -1,5 +1,8 @@
 # Changelog
 
+- Community Plugins now uses a dedicated catalog API that cannot be confused
+  with installed plugins, tolerates temporary stats failures, and renders each
+  plugin repository's sanitized GitHub `README.md` in the detail view.
 - Community Plugins Browse now merges Obsidian's complete official catalog with
   official download statistics, ranks plugins by popularity, and provides
   sorting, download/update metadata, incremental rendering and detail views.

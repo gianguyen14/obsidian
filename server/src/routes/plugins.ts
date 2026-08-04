@@ -8,6 +8,19 @@ import * as plugins from '../services/plugins.js';
 export const pluginsRouter = Router();
 pluginsRouter.use(requireAuth);
 
+// Catalog discovery has its own static mount (`/api/community-plugins`) so a
+// reverse proxy cannot accidentally turn a catalog request into the installed
+// plugin list by dropping `?view=catalog`.
+export const communityPluginsRouter = Router();
+communityPluginsRouter.use(requireAuth);
+communityPluginsRouter.get('/', asyncHandler(async (_req, res) => {
+  const catalog = await plugins.listCommunityPlugins();
+  res.json({ plugins: catalog, total: catalog.length, source: 'obsidian-community' });
+}));
+communityPluginsRouter.get('/:id/readme', asyncHandler(async (req, res) => {
+  res.json({ readme: await plugins.getCommunityPluginReadme(req.params.id) });
+}));
+
 pluginsRouter.get('/', asyncHandler(async (req, res) => {
   // Keep catalog discovery on the same endpoint that lists installed plugins.
   // Some reverse proxies only forward the exact `/api/plugins/` location and

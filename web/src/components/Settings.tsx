@@ -5,6 +5,7 @@ import { useStore } from '../lib/store';
 import { api, type SecurityStatus } from '../lib/api';
 import Icon from './Icon';
 import PluginDomMount from './PluginDomMount';
+import { renderMarkdown } from '../lib/markdown';
 import {
   disablePlugin,
   enablePlugin,
@@ -651,6 +652,45 @@ function formatPluginDate(value: number): string {
 }
 
 function PluginDetails({ plugin, installed = false, installing = false, onInstall, onClose }: { plugin: any; installed?: boolean; installing?: boolean; onInstall?: () => void; onClose: () => void }) {
+  const [readmeHtml, setReadmeHtml] = useState('');
+  const [readmeSource, setReadmeSource] = useState('');
+  const [readmeRepo, setReadmeRepo] = useState(plugin.repo ?? '');
+  const [readmeLoading, setReadmeLoading] = useState(Boolean(plugin.id));
+  const [readmeError, setReadmeError] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    if (!plugin.id) {
+      setReadmeLoading(false);
+      return;
+    }
+    setReadmeLoading(true);
+    setReadmeError('');
+    api.getCommunityPluginReadme(plugin.id)
+      .then(async ({ readme }) => {
+        if (cancelled) return;
+        setReadmeRepo(readme.repo);
+        setReadmeSource(readme.sourceUrl);
+        if (!readme.markdown) {
+          setReadmeHtml('');
+          return;
+        }
+        const markdown = rewriteGithubReadmeUrls(readme.markdown, readme.assetBaseUrl, readme.repo);
+        const html = await renderMarkdown(markdown, {
+          rawUrl: (relative) => new URL(relative, readme.assetBaseUrl).href,
+        });
+        if (!cancelled) setReadmeHtml(html);
+      })
+      .catch((error) => { if (!cancelled) setReadmeError(error.message); })
+      .finally(() => { if (!cancelled) setReadmeLoading(false); });
+    return () => { cancelled = true; };
+  }, [plugin.id]);
+
+  const openReadmeLink = (event: React.MouseEvent<HTMLDivElement>) => {
+    const link = (event.target as HTMLElement).closest('a');
+    if (!link?.href) return;
+    event.preventDefault();
+    window.open(link.href, '_blank', 'noopener,noreferrer');
+  };
   return (
     <div className="plugin-browser-backdrop" onClick={onClose}>
       <div className="plugin-details" onClick={(event) => event.stopPropagation()}>
@@ -660,11 +700,33 @@ function PluginDetails({ plugin, installed = false, installing = false, onInstal
         {typeof plugin.downloads === 'number' && <div className="plugin-detail-stats"><span><Icon name="download" size={15} />{plugin.downloads.toLocaleString()} downloads</span>{plugin.updated && <span>Updated {formatPluginDate(plugin.updated)}</span>}</div>}
         <p>{plugin.description || 'No description provided.'}</p>
         <div className="plugin-detail-id">Plugin ID: <code>{plugin.id}</code></div>
-        {plugin.repo && <div className="plugin-detail-repo">Repository: <a href={`https://github.com/${plugin.repo}`} target="_blank" rel="noreferrer">{plugin.repo}</a></div>}
+        {readmeRepo && <div className="plugin-detail-repo">Repository: <a href={`https://github.com/${readmeRepo}`} target="_blank" rel="noreferrer">{readmeRepo}</a></div>}
         {onInstall && <div className="plugin-detail-actions">{installed ? <span className="plugin-installed-badge">Installed</span> : <button className="btn" disabled={installing} onClick={onInstall}>{installing ? 'Installing…' : 'Install'}</button>}</div>}
+        <div className="plugin-readme-heading"><strong>README</strong>{readmeSource && <a href={readmeSource} target="_blank" rel="noreferrer">View on GitHub</a>}</div>
+        <div className="plugin-readme markdown-preview">
+          {readmeLoading && <div className="plugin-readme-state">Loading README…</div>}
+          {readmeError && <div className="plugin-readme-state error">Could not load README: {readmeError}</div>}
+          {!readmeLoading && !readmeError && !readmeHtml && <div className="plugin-readme-state">This plugin does not provide a README.md file.</div>}
+          {readmeHtml && <div className="preview-inner" onClick={openReadmeLink} dangerouslySetInnerHTML={{ __html: readmeHtml }} />}
+        </div>
       </div>
     </div>
   );
+}
+
+function rewriteGithubReadmeUrls(markdown: string, assetBaseUrl: string, repo: string): string {
+  const isAbsolute = (target: string) => /^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(target);
+  const resolve = (target: string, image: boolean) => {
+    const clean = target.replace(/^<|>$/g, '');
+    if (!clean || isAbsolute(clean)) return target;
+    if (image) return new URL(clean, assetBaseUrl).href;
+    const relative = new URL(clean, assetBaseUrl).pathname.split('/HEAD/')[1] ?? clean;
+    return `https://github.com/${repo}/blob/HEAD/${relative}`;
+  };
+  return markdown
+    .replace(/(!?\[[^\]]*\]\()(<[^>]+>|[^\s)]+)([^)]*\))/g, (_match, prefix: string, target: string, suffix: string) => `${prefix}${resolve(target, prefix.startsWith('!'))}${suffix}`)
+    .replace(/(<img\b[^>]*?\bsrc=["'])([^"']+)(["'])/gi, (_match, prefix: string, target: string, suffix: string) => `${prefix}${resolve(target, true)}${suffix}`)
+    .replace(/(<a\b[^>]*?\bhref=["'])([^"']+)(["'])/gi, (_match, prefix: string, target: string, suffix: string) => `${prefix}${resolve(target, false)}${suffix}`);
 }
 
 function PluginStatus({ state, desktopOnly }: { state?: any; desktopOnly?: boolean }) {

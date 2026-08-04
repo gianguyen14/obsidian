@@ -39,6 +39,14 @@ export interface CommunityPlugin {
   updated: number | null;
 }
 
+export interface CommunityPluginReadme {
+  repo: string;
+  markdown: string | null;
+  path: string | null;
+  sourceUrl: string;
+  assetBaseUrl: string;
+}
+
 interface CommunityPluginStats {
   downloads?: number;
   updated?: number;
@@ -50,6 +58,7 @@ const COMMUNITY_CATALOG_URL = process.env.COMMUNITY_PLUGIN_CATALOG_URL
 const COMMUNITY_PLUGIN_STATS_URL = process.env.COMMUNITY_PLUGIN_STATS_URL
   ?? 'https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugin-stats.json';
 let catalogCache: { expiresAt: number; plugins: CommunityPlugin[] } | null = null;
+const readmeCache = new Map<string, { expiresAt: number; readme: CommunityPluginReadme }>();
 
 async function pluginsDir(): Promise<string> {
   const root = await getVaultRoot();
@@ -104,17 +113,27 @@ export async function listInstalled(): Promise<InstalledPlugin[]> {
  * statistics. Both documents use the plugin id as their stable join key. */
 export async function listCommunityPlugins(): Promise<CommunityPlugin[]> {
   if (catalogCache && catalogCache.expiresAt > Date.now()) return catalogCache.plugins;
-  const request = (url: string, label: string) => fetch(url, {
+  const request = <T>(url: string, label: string): Promise<T> => fetch(url, {
     headers: { 'User-Agent': 'WebObsidian' },
     signal: AbortSignal.timeout(15_000),
   }).then(async (response) => {
     if (!response.ok) throw new Error(`${label} failed: ${response.status}`);
-    return response.json();
+    return response.json() as Promise<T>;
   });
-  const [raw, stats] = await Promise.all([
-    request(COMMUNITY_CATALOG_URL, 'Community plugin catalog') as Promise<Array<Omit<CommunityPlugin, 'downloads' | 'updated'>>>,
-    request(COMMUNITY_PLUGIN_STATS_URL, 'Community plugin statistics') as Promise<Record<string, CommunityPluginStats>>,
-  ]);
+  let raw: Array<Omit<CommunityPlugin, 'downloads' | 'updated'>>;
+  try {
+    raw = await request<Array<Omit<CommunityPlugin, 'downloads' | 'updated'>>>(COMMUNITY_CATALOG_URL, 'Community plugin catalog');
+  } catch (error) {
+    // A stale complete catalog is more useful than an empty Browse window when
+    // raw.githubusercontent.com has a short outage.
+    if (catalogCache) return catalogCache.plugins;
+    throw error;
+  }
+  const stats = await request<Record<string, CommunityPluginStats>>(COMMUNITY_PLUGIN_STATS_URL, 'Community plugin statistics')
+    .catch((error) => {
+      console.warn(`[plugins] ${error instanceof Error ? error.message : String(error)}; continuing without statistics`);
+      return {} as Record<string, CommunityPluginStats>;
+    });
   const plugins = raw
     .filter((plugin) => plugin?.id && plugin?.name && plugin?.repo)
     .map((plugin) => {
@@ -129,6 +148,73 @@ export async function listCommunityPlugins(): Promise<CommunityPlugin[]> {
     .sort((left, right) => right.downloads - left.downloads || left.name.localeCompare(right.name));
   catalogCache = { expiresAt: Date.now() + 15 * 60_000, plugins };
   return plugins;
+}
+
+/** Read the repository README through GitHub's API. The plugin id is resolved
+ * against the official catalog so callers cannot turn this into an arbitrary
+ * HTTP proxy. GitHub discovers the default branch and README filename for us. */
+export async function getCommunityPluginReadme(id: string): Promise<CommunityPluginReadme> {
+  const safeId = assertSafeId(id);
+  const cached = readmeCache.get(safeId);
+  if (cached && cached.expiresAt > Date.now()) return cached.readme;
+
+  const plugin = (await listCommunityPlugins()).find((item) => item.id === safeId);
+  if (!plugin) throw Object.assign(new Error('Community plugin not found'), { status: 404 });
+  if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(plugin.repo)) {
+    throw Object.assign(new Error('Invalid community plugin repository'), { status: 502 });
+  }
+
+  const apiTemplate = process.env.COMMUNITY_PLUGIN_README_URL_TEMPLATE
+    ?? 'https://api.github.com/repos/{repo}/readme';
+  const url = apiTemplate.replace('{repo}', plugin.repo);
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'WebObsidian',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+  const repositoryUrl = `https://github.com/${plugin.repo}`;
+  if (response.status === 404) {
+    const readme = {
+      repo: plugin.repo,
+      markdown: null,
+      path: null,
+      sourceUrl: repositoryUrl,
+      assetBaseUrl: `https://raw.githubusercontent.com/${plugin.repo}/HEAD/`,
+    };
+    readmeCache.set(safeId, { expiresAt: Date.now() + 15 * 60_000, readme });
+    return readme;
+  }
+  if (!response.ok) throw new Error(`GitHub README lookup failed: ${response.status}`);
+  const payload = await response.json() as {
+    content?: string;
+    encoding?: string;
+    path?: string;
+    html_url?: string;
+    download_url?: string;
+  };
+  if (payload.encoding !== 'base64' || typeof payload.content !== 'string') {
+    throw new Error('GitHub README response is invalid');
+  }
+  const markdown = Buffer.from(payload.content.replace(/\s/g, ''), 'base64').toString('utf8');
+  if (Buffer.byteLength(markdown, 'utf8') > 2 * 1024 * 1024) {
+    throw new Error('Plugin README is too large');
+  }
+  const readmePath = payload.path || 'README.md';
+  const slash = readmePath.lastIndexOf('/');
+  const assetBaseUrl = payload.download_url
+    ? new URL('.', payload.download_url).href
+    : `https://raw.githubusercontent.com/${plugin.repo}/HEAD/${slash >= 0 ? readmePath.slice(0, slash + 1) : ''}`;
+  const readme = {
+    repo: plugin.repo,
+    markdown,
+    path: readmePath,
+    sourceUrl: payload.html_url || `${repositoryUrl}/blob/HEAD/${readmePath}`,
+    assetBaseUrl,
+  };
+  readmeCache.set(safeId, { expiresAt: Date.now() + 60 * 60_000, readme });
+  return readme;
 }
 
 export async function getPluginAsset(
