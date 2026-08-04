@@ -166,7 +166,10 @@ function createSecurityHeaders(allowPluginCodeGeneration: boolean) {
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
         fontSrc: ["'self'", 'data:'],
-        connectSrc: ["'self'", 'ws:', 'wss:'],
+        // Browse loads the official Obsidian catalog, download statistics and
+        // plugin README files directly from GitHub so restrictive reverse
+        // proxies cannot turn discovery requests into /api 404 responses.
+        connectSrc: ["'self'", 'ws:', 'wss:', 'https://raw.githubusercontent.com'],
         objectSrc: ["'none'"],
         frameSrc: ["'self'", 'blob:'],
         baseUri: ["'self'"],

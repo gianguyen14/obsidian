@@ -1,5 +1,7 @@
 # Changelog
 
+- Community Plugins Browse now fetches Obsidian's catalog/statistics and each
+  repository README directly from GitHub, eliminating reverse-proxy API 404s.
 - Community Plugins now uses a dedicated catalog API that cannot be confused
   with installed plugins, tolerates temporary stats failures, and renders each
   plugin repository's sanitized GitHub `README.md` in the detail view.

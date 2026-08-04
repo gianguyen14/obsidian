@@ -665,7 +665,7 @@ function PluginDetails({ plugin, installed = false, installing = false, onInstal
     }
     setReadmeLoading(true);
     setReadmeError('');
-    api.getCommunityPluginReadme(plugin.id)
+    api.getCommunityPluginReadme(plugin.id, plugin.repo)
       .then(async ({ readme }) => {
         if (cancelled) return;
         setReadmeRepo(readme.repo);

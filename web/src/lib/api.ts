@@ -1,5 +1,10 @@
 // Thin fetch wrapper around the WebObsidian server API.
 
+import {
+  fetchCommunityPluginCatalog,
+  fetchCommunityPluginReadme,
+} from './community-plugins';
+
 export interface TreeNode {
   name: string;
   path: string;
@@ -310,23 +315,10 @@ export const api = {
 
   // plugins
   listPlugins: () => req<{ plugins: any[] }>('/api/plugins/'),
-  // Use POST actions on the already-established collection URL. This survives
-  // reverse proxies that reject deeper paths, drop query strings or discard
-  // non-standard selector headers.
-  listCommunityPlugins: () => req<{ plugins: any[]; total: number; source: string }>('/api/plugins/', {
-    method: 'POST',
-    body: JSON.stringify({ action: 'catalog' }),
-  }),
-  getCommunityPluginReadme: (id: string) => req<{ readme: {
-    repo: string;
-    markdown: string | null;
-    path: string | null;
-    sourceUrl: string;
-    assetBaseUrl: string;
-  } }>('/api/plugins/', {
-    method: 'POST',
-    body: JSON.stringify({ action: 'readme', id }),
-  }),
+  // Public discovery is loaded directly from Obsidian/GitHub. Keeping it out
+  // of /api/plugins avoids 404s from self-hosted reverse-proxy route filters.
+  listCommunityPlugins: fetchCommunityPluginCatalog,
+  getCommunityPluginReadme: fetchCommunityPluginReadme,
   installPlugin: (repo: string) =>
     req<{ plugin: any }>('/api/plugins/install', { method: 'POST', body: JSON.stringify({ repo }) }),
   setPluginEnabled: (id: string, enabled: boolean) =>
