@@ -6,6 +6,7 @@ import { api, type SecurityStatus } from '../lib/api';
 import Icon from './Icon';
 import PluginDomMount from './PluginDomMount';
 import { renderMarkdown } from '../lib/markdown';
+import type { ThemeSetting } from '../lib/theme';
 import {
   disablePlugin,
   enablePlugin,
@@ -18,7 +19,13 @@ import {
 type CoreSection = 'vault' | 'git' | 'api' | 'sharing' | 'plugins' | 'appearance' | 'account' | 'about';
 type Section = CoreSection | `plugin:${string}`;
 
-export default function Settings() {
+export default function Settings({
+  theme,
+  onThemeChange,
+}: {
+  theme: ThemeSetting;
+  onThemeChange: (theme: ThemeSetting) => Promise<void>;
+}) {
   const open = useStore((s) => s.settingsOpen);
   const setOpen = useStore((s) => s.setSettings);
   const [section, setSection] = useState<Section>('vault');
@@ -83,7 +90,7 @@ export default function Settings() {
               const tab = pluginRuntime.settingTabs.find((item) => item.pluginId === pluginId);
               if (tab) setSection(`plugin:${tab.id}`);
             }} />}
-            {settings && section === 'appearance' && <Appearance s={settings} />}
+            {settings && section === 'appearance' && <Appearance theme={theme} onThemeChange={onThemeChange} />}
             {section === 'account' && <AccountSettings s={settings} reload={() => api.getSettings().then(setSettings)} />}
             {section === 'about' && <About />}
             {section.startsWith('plugin:') && (
@@ -744,14 +751,22 @@ function PluginStatus({ state, desktopOnly }: { state?: any; desktopOnly?: boole
   );
 }
 
-function Appearance({ s }: { s: any }) {
-  const [theme, setTheme] = useState(s.ui.theme);
-  const save = async (t: string) => { setTheme(t); await api.putSettings({ ui: { theme: t } }); location.reload(); };
+function Appearance({
+  theme,
+  onThemeChange,
+}: {
+  theme: ThemeSetting;
+  onThemeChange: (theme: ThemeSetting) => Promise<void>;
+}) {
   return (
     <div>
       <h2>Appearance</h2>
       <Row name="Theme">
-        <select className="text-input" value={theme} onChange={(e) => save(e.target.value)}>
+        <select
+          className="text-input"
+          value={theme}
+          onChange={(event) => void onThemeChange(event.target.value as ThemeSetting)}
+        >
           <option value="obsidian-dark">Obsidian Dark</option>
           <option value="obsidian-light">Obsidian Light</option>
         </select>

@@ -16,6 +16,7 @@ import FolderPicker from './components/FolderPicker';
 import { handlePluginFilesystemEvent, handlePluginHotkey, loadPlugins } from './lib/plugins';
 import { initUrlSync } from './lib/urlsync';
 import { useIsMobile } from './lib/useIsMobile';
+import { normalizeTheme, oppositeTheme, themeClass, type ThemeSetting } from './lib/theme';
 
 export default function App() {
   const authed = useStore((s) => s.authed);
@@ -32,7 +33,7 @@ export default function App() {
   const save = useStore((s) => s.save);
   const toast = useStore((s) => s.toast);
   const [checking, setChecking] = useState(true);
-  const [theme, setTheme] = useState<'theme-dark' | 'theme-light'>('theme-light');
+  const [theme, setTheme] = useState<ThemeSetting>('obsidian-light');
 
   useEffect(() => {
     api
@@ -63,7 +64,7 @@ export default function App() {
       .catch(() => {});
     api
       .getSettings()
-      .then((s) => setTheme(s?.ui?.theme === 'obsidian-dark' ? 'theme-dark' : 'theme-light'))
+      .then((s) => setTheme(normalizeTheme(s?.ui?.theme)))
       .catch(() => {});
     useStore.getState().loadShares(); // badge shared notes in the file tree
     // websocket live updates
@@ -151,8 +152,23 @@ export default function App() {
     };
   }, [isMobile, setMobileDrawer]);
 
-  if (checking) return <div className={theme} style={{ height: '100%' }} />;
-  if (!authed) return <div className={theme}><Login onAuthed={() => setAuthed(true)} /></div>;
+  const changeTheme = async (nextTheme: ThemeSetting) => {
+    const previousTheme = theme;
+    setTheme(nextTheme);
+    try {
+      const updated = await api.putSettings({ ui: { theme: nextTheme } });
+      setTheme(normalizeTheme(updated?.ui?.theme));
+    } catch (error) {
+      setTheme(previousTheme);
+      console.error('Failed to save theme', error);
+      useStore.getState().notify('Could not save theme');
+    }
+  };
+
+  const activeThemeClass = themeClass(theme);
+
+  if (checking) return <div className={activeThemeClass} style={{ height: '100%' }} />;
+  if (!authed) return <div className={activeThemeClass}><Login onAuthed={() => setAuthed(true)} /></div>;
   // On mobile the sidebars are overlay drawers (always mounted, slid in/out by
   // CSS), driven by the device-local `mobileDrawer` state — not the persisted
   // leftOpen/rightOpen that sync across desktops.
@@ -168,9 +184,9 @@ export default function App() {
   ].filter(Boolean).join(' ');
 
   return (
-    <div className={theme}>
+    <div className={activeThemeClass}>
       <div className={appCls}>
-        <Ribbon onTheme={() => setTheme((t) => (t === 'theme-dark' ? 'theme-light' : 'theme-dark'))} />
+        <Ribbon onTheme={() => void changeTheme(oppositeTheme(theme))} />
         {showLeft && <Sidebar />}
         <Workspace />
         {showRight && <RightSidebar />}
@@ -179,7 +195,7 @@ export default function App() {
         )}
       </div>
       <CommandPalette />
-      <Settings />
+      <Settings theme={theme} onThemeChange={changeTheme} />
       <ShareDialog />
       <VersionHistory />
       <TrashView />

@@ -8,7 +8,7 @@
     "dev": "npm run assets:excalidraw && vite",
     "build": "npm run assets:excalidraw && tsc -b && vite build",
     "preview": "vite preview",
-    "test:plugins": "vitest run src/lib/plugins.compat.test.ts src/lib/community-plugins.test.ts",
+    "test:plugins": "vitest run src/lib/plugins.compat.test.ts src/lib/community-plugins.test.ts src/lib/theme.test.ts",
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
