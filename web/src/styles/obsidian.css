@@ -228,7 +228,11 @@
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
-.theme-light, .theme-dark { height: 100%; }
+.theme-light, .theme-dark {
+  height: 100%;
+  color: var(--text-normal);
+  background: var(--background-primary);
+}
 body {
   font-family: var(--font-ui);
   color: var(--text-normal);

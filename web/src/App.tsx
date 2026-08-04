@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { api, ApiError } from './lib/api';
 import { useStore } from './lib/store';
 import Login from './components/Login';
@@ -16,7 +16,13 @@ import FolderPicker from './components/FolderPicker';
 import { handlePluginFilesystemEvent, handlePluginHotkey, loadPlugins } from './lib/plugins';
 import { initUrlSync } from './lib/urlsync';
 import { useIsMobile } from './lib/useIsMobile';
-import { normalizeTheme, oppositeTheme, themeClass, type ThemeSetting } from './lib/theme';
+import {
+  applyThemeToDocument,
+  normalizeTheme,
+  oppositeTheme,
+  themeClass,
+  type ThemeSetting,
+} from './lib/theme';
 
 export default function App() {
   const authed = useStore((s) => s.authed);
@@ -34,6 +40,10 @@ export default function App() {
   const toast = useStore((s) => s.toast);
   const [checking, setChecking] = useState(true);
   const [theme, setTheme] = useState<ThemeSetting>('obsidian-light');
+
+  useLayoutEffect(() => {
+    applyThemeToDocument(theme);
+  }, [theme]);
 
   useEffect(() => {
     api
