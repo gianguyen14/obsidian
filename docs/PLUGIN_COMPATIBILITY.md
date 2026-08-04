@@ -23,7 +23,8 @@ optional `styles.css`, and `data.json` layout as Obsidian.
   shown in the settings panel instead of blanking the application.
 - Markdown Reading view: post-processors and fenced code-block processors.
 - Plugin state in `.obsidian/plugins/<id>/data.json`.
-- Plugin-scoped local storage and public Bases view registration.
+- Plugin-scoped local storage, public Bases view registration, and a native `.base`
+  host with the Obsidian-style view/result/Sort/Filter/Properties/Search/New toolbar.
 - Common helpers: `moment`, YAML, path/link/frontmatter/tag/search/language/PDF utilities,
   icons, and the Obsidian DOM helper methods used by plugin UIs.
 - Browser modules commonly externalized by plugin bundles: CodeMirror 6, Lezer, React,
@@ -35,8 +36,9 @@ optional `styles.css`, and `data.json` layout as Obsidian.
   byte-for-byte implementation of Obsidian's internal cache.
 - Editor command callbacks receive a CodeMirror-backed editor adapter. Direct CM6
   extension registration and `EditorSuggest` are reported as partial compatibility.
-- Bases view registrations are accepted so plugins can initialize, but WebObsidian does
-  not yet provide Obsidian's complete `.base` query engine or custom Bases view host.
+- The `.base` host reads standard YAML view metadata and provides tag-backed TaskNotes
+  task results. Obsidian's complete formula/filter query engine and the custom Kanban,
+  Calendar, and Mini Calendar renderers remain partial.
 - CLI handlers are accepted so plugins can initialize, but WebObsidian has no desktop
   command-line process from which to invoke them.
 - Markdown post-processors run in Reading view. Live Preview remains WebObsidian's own

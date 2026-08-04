@@ -17,6 +17,7 @@ import { pathToUrl } from '../lib/urlsync';
 import { VIDEO_EXT_RE, AUDIO_EXT_RE } from '../lib/media';
 import { getPluginRuntimeSnapshot, isPluginViewPath, subscribePluginRuntime } from '../lib/plugins';
 import PluginViewHost from './PluginViewHost';
+import BaseView from './BaseView';
 
 const ExcalidrawView = lazy(() => import('./ExcalidrawView'));
 
@@ -28,11 +29,16 @@ function EditorPane() {
   const isImage = activePath ? /\.(png|jpe?g|gif|svg|webp)$/i.test(activePath) : false;
   const isCanvas = activePath ? /\.canvas$/i.test(activePath) : false;
   const isExcalidraw = activePath ? /\.excalidraw$/i.test(activePath) : false;
+  const isBase = activePath ? /\.base$/i.test(activePath) : false;
   const isVideo = activePath ? VIDEO_EXT_RE.test(activePath) : false;
   const isAudio = activePath ? AUDIO_EXT_RE.test(activePath) : false;
 
   if (activePath && isPluginViewPath(activePath)) {
     return <PluginViewHost path={activePath} />;
+  }
+
+  if (activePath && isBase) {
+    return <BaseView />;
   }
 
   if (activePath && isCanvas) {
@@ -334,7 +340,7 @@ export default function Workspace() {
               {t.path === GRAPH_PATH && (
                 <Icon name="graph" size={13} style={{ marginRight: 4, flexShrink: 0 }} />
               )}
-              <span className="title">{t.title.replace(/\.(md|markdown|excalidraw)$/, '')}</span>
+              <span className="title">{t.title.replace(/\.(md|markdown|excalidraw|base)$/, '')}</span>
               {dirty && activePath === t.path ? (
                 <span className="dot">●</span>
               ) : (
@@ -383,7 +389,7 @@ export default function Workspace() {
               : activePath.split('/').map((seg, i) => (
                   <span key={i}>
                     {i > 0 && <span className="sep">/</span>}
-                    {seg.replace(/\.(md|markdown|excalidraw)$/, '')}
+                    {seg.replace(/\.(md|markdown|excalidraw|base)$/, '')}
                   </span>
                 ))}
           </span>

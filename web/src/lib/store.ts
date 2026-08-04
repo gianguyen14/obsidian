@@ -220,7 +220,7 @@ interface AppState {
   applyRemoteState: (state: any, originId: string) => Promise<void>;
 }
 
-const TEXT_RE = /\.(md|markdown|txt|json|csv|canvas|excalidraw|css|js|ya?ml)$/i;
+const TEXT_RE = /\.(md|markdown|txt|json|csv|canvas|excalidraw|base|css|js|ya?ml)$/i;
 
 // ---- server-side workspace persistence (shared across browsers/devices) ----
 const PERSIST_KEYS = [

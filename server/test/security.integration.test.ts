@@ -231,6 +231,30 @@ test('security-sensitive setup, session and vault boundaries', async () => {
   assert.equal(drawingRead.status, 200);
   assert.equal((await drawingRead.json() as { content: string }).content, drawing);
 
+  // Obsidian Bases files are YAML text. They must use the JSON text-content
+  // route just like Markdown/Canvas rather than being streamed as a binary
+  // attachment, otherwise the web client cannot build the Bases toolbar.
+  const baseYaml = [
+    'filters:',
+    '  and:',
+    '    - file.hasTag("task")',
+    'views:',
+    '  - type: tasknotesTaskList',
+    '    name: Manual Order',
+    '',
+  ].join('\n');
+  assert.equal((await jsonRequest(base, '/api/files/content', {
+    method: 'PUT',
+    headers: { Cookie: oldCookie },
+    body: JSON.stringify({ path: 'TaskNotes/Views/tasks-default.base', content: baseYaml }),
+  })).status, 200);
+  const baseRead = await jsonRequest(base, '/api/files/content?path=TaskNotes%2FViews%2Ftasks-default.base', {
+    headers: { Cookie: oldCookie },
+  });
+  assert.equal(baseRead.status, 200);
+  assert.match(baseRead.headers.get('content-type') ?? '', /application\/json/);
+  assert.equal((await baseRead.json() as { content: string }).content, baseYaml);
+
   // Excalidraw can issue overlapping autosaves (and multiple browser tabs can
   // save the same drawing at once). Every atomic write must use its own temp
   // file; timestamp-only names used to collide and make one request fail with
