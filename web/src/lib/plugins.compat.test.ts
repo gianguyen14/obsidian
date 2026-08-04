@@ -189,6 +189,9 @@ describe('community plugin compatibility runtime', () => {
     await plugin.loadAsync();
     const ribbon = getPluginRuntimeSnapshot().ribbonItems.find((item) => item.pluginId === 'ribbon-fixture');
     expect(ribbon).toBeTruthy();
+    expect(ribbon!.el.dataset.tooltip).toBe('Open fixture sidebar');
+    expect(ribbon!.el.getAttribute('aria-label')).toBe('Open fixture sidebar');
+    expect(ribbon!.el.hasAttribute('title')).toBe(false);
 
     ribbon!.el.click();
     await vi.waitFor(() => expect(useStore.getState().pluginLeftPath).toMatch(/^plugin-view:\/\/fixture-sidebar-view\//));

@@ -47,25 +47,25 @@ export default function Ribbon({ onTheme }: { onTheme: () => void }) {
 
   return (
     <div className="ribbon">
-      <button className={leftPanel === 'files' ? 'active' : ''} title="Files" onClick={() => setLeftPanel('files')}>
+      <button className={leftPanel === 'files' ? 'active' : ''} data-tooltip="Open file explorer" aria-label="Open file explorer" onClick={() => setLeftPanel('files')}>
         <Icon name="file-text" size={18} />
       </button>
-      <button className={leftPanel === 'search' ? 'active' : ''} title="Search (⌘⇧F)" onClick={() => setLeftPanel('search')}>
+      <button className={leftPanel === 'search' ? 'active' : ''} data-tooltip="Search (⌘⇧F)" aria-label="Search" onClick={() => setLeftPanel('search')}>
         <Icon name="search" size={18} />
       </button>
-      <button title="Graph view" onClick={() => setGraph(true)}>
+      <button data-tooltip="Open graph view" aria-label="Open graph view" onClick={() => setGraph(true)}>
         <Icon name="graph" size={18} />
       </button>
-      <button className={leftPanel === 'bookmarks' ? 'active' : ''} title="Bookmarks & recent" onClick={() => setLeftPanel('bookmarks')}>
+      <button className={leftPanel === 'bookmarks' ? 'active' : ''} data-tooltip="Open bookmarks" aria-label="Open bookmarks" onClick={() => setLeftPanel('bookmarks')}>
         <Icon name="bookmark" size={18} />
       </button>
-      <button title="Daily note" onClick={() => openDailyNote()}>
+      <button data-tooltip="Open today's daily note" aria-label="Open today's daily note" onClick={() => openDailyNote()}>
         <Icon name="calendar" size={18} />
       </button>
-      <button className={leftPanel === 'tags' ? 'active' : ''} title="Tags" onClick={() => setLeftPanel('tags')}>
+      <button className={leftPanel === 'tags' ? 'active' : ''} data-tooltip="Open tags" aria-label="Open tags" onClick={() => setLeftPanel('tags')}>
         <Icon name="hash" size={18} />
       </button>
-      <button title="Command palette (⌘P)" onClick={() => setPalette(true, 'commands')}>
+      <button data-tooltip="Open command palette (⌘P)" aria-label="Open command palette" onClick={() => setPalette(true, 'commands')}>
         <Icon name="command" size={18} />
       </button>
       {pluginRuntime.ribbonItems.map((item) => (
@@ -73,14 +73,14 @@ export default function Ribbon({ onTheme }: { onTheme: () => void }) {
       ))}
       <div className="spacer" />
       {gitEnabled && (
-        <button title={syncing ? 'Syncing…' : 'Sync now'} onClick={sync} disabled={syncing}>
+        <button data-tooltip={syncing ? 'Syncing…' : 'Sync now'} aria-label={syncing ? 'Syncing' : 'Sync now'} onClick={sync} disabled={syncing}>
           <Icon name="refresh-cw" size={18} style={syncing ? { animation: 'spin 1s linear infinite' } : undefined} />
         </button>
       )}
-      <button title="Toggle theme" onClick={onTheme}>
+      <button data-tooltip="Toggle light/dark mode" aria-label="Toggle light/dark mode" onClick={onTheme}>
         <Icon name="moon" size={18} />
       </button>
-      <button title="Settings" onClick={() => setSettings(true)}>
+      <button data-tooltip="Open settings" aria-label="Open settings" onClick={() => setSettings(true)}>
         <Icon name="settings" size={18} />
       </button>
     </div>

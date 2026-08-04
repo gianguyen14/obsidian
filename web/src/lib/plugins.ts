@@ -1583,7 +1583,7 @@ export abstract class Plugin extends Component {
     const el = document.createElement('button');
     el.className = 'clickable-icon plugin-ribbon-button';
     el.type = 'button';
-    el.title = title;
+    el.dataset.tooltip = title;
     el.setAttribute('aria-label', title);
     setIcon(el, icon);
     const onClick = (event: MouseEvent) => {

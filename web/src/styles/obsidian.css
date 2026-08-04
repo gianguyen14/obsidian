@@ -277,18 +277,49 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
   background: var(--ribbon-bg);
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   padding: 8px 0; border-right: 1px solid var(--bg-modifier-border);
+  position: relative; z-index: 30; overflow: visible;
 }
 .ribbon button {
   width: 30px; height: 30px; border: 0; background: transparent; color: var(--text-faint);
   border-radius: var(--radius-s); cursor: pointer; display: grid; place-items: center;
-  transition: var(--transition);
+  transition: var(--transition); position: relative;
 }
 .ribbon button:hover { background: var(--bg-modifier-hover); color: var(--text-normal); }
 .ribbon button.active { color: var(--text-accent); }
+.ribbon button[data-tooltip]::before,
+.ribbon button[data-tooltip]::after {
+  position: absolute; top: 50%; pointer-events: none; opacity: 0; visibility: hidden;
+  transition: opacity 80ms ease-out, visibility 0s linear 400ms;
+}
+.ribbon button[data-tooltip]::before {
+  content: ''; left: calc(100% + 4px); z-index: 1001;
+  transform: translateY(-50%);
+  border: 5px solid transparent; border-right-color: #000;
+}
+.ribbon button[data-tooltip]::after {
+  content: attr(data-tooltip); left: calc(100% + 14px); z-index: 1000;
+  transform: translateY(-50%); width: max-content; max-width: 260px;
+  padding: 5px 8px; border-radius: var(--radius-s); background: #000; color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); white-space: nowrap;
+  font-family: var(--font-ui); font-size: var(--font-ui-smaller); font-weight: 400;
+  line-height: 1.35; letter-spacing: normal; text-align: left;
+}
+.ribbon button[data-tooltip]:hover::before,
+.ribbon button[data-tooltip]:hover::after,
+.ribbon button[data-tooltip]:focus-visible::before,
+.ribbon button[data-tooltip]:focus-visible::after {
+  opacity: 1; visibility: visible;
+  transition-delay: 400ms;
+}
 .ribbon .spacer { flex: 1; }
 .plugin-dom-host.plugin-ribbon-item { display: contents; }
 .plugin-ribbon-button { padding: 8px; }
 .plugin-ribbon-button svg { width: 18px; height: 18px; }
+
+@media (hover: none) {
+  .ribbon button[data-tooltip]::before,
+  .ribbon button[data-tooltip]::after { display: none; }
+}
 
 /* Sidebars */
 .sidebar, .right-sidebar {
