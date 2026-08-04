@@ -1816,6 +1816,9 @@ const Platform = {
 };
 
 const obsidianModule: Record<string, any> = {
+  // CommonJS/ESM interop helpers emitted by bundlers probe this marker before
+  // reading named exports. It is module metadata, not an Obsidian API member.
+  __esModule: true,
   App, Plugin, BaseComponent, Component, Events, Notice, Modal,
   PopoverSuggest, AbstractInputSuggest, EditorSuggest, SuggestModal, FuzzySuggestModal,
   Menu, MenuItem, Setting, SettingGroup, SettingPage, PluginSettingTab,

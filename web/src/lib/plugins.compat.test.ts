@@ -65,7 +65,11 @@ describe('community plugin compatibility runtime', () => {
     ];
     classNames.forEach((name) => expect(typeof obsidian[name], name).toBe('function'));
     helperNames.forEach((name) => expect(typeof obsidian[name], name).toBe('function'));
+    expect(obsidian.__esModule).toBe(true);
+    const interopImport = obsidian && obsidian.__esModule ? obsidian : { default: obsidian };
+    expect(interopImport.Plugin).toBe(Plugin);
     expect(obsidian.apiVersion).toBe('1.13.1');
+    expect(() => obsidian.DefinitelyMissing).toThrow(/unsupported Obsidian API/);
   });
 
   it('provides the browser modules externalized by Excalidraw and TaskNotes', () => {
@@ -77,7 +81,6 @@ describe('community plugin compatibility runtime', () => {
       expect(runtimeRequire('fixture', moduleName), moduleName).toBeTruthy();
     }
     expect(() => runtimeRequire('fixture', 'electron')).toThrow(/Node\/Electron module/);
-    expect(() => runtimeRequire('fixture', 'obsidian').DefinitelyMissing).toThrow(/unsupported Obsidian API/);
   });
 
   it('provides plugin local storage and the public Bases registration surface', () => {
