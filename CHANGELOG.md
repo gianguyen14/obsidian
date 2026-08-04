@@ -1,5 +1,7 @@
 # Changelog
 
+- Fixed Community Plugins Browse returning a proxy-level `404 Not Found` by loading the catalog through the established plugins collection endpoint, with retry UI and route regression coverage.
+
 All notable changes to WebObsidian are documented here. This project tracks its product
 design and version history in [PRD.md](PRD.md); the entries below summarize user-facing
 changes. The format is loosely based on [Keep a Changelog](https://keepachangelog.com).

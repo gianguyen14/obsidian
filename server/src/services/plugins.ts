@@ -33,8 +33,8 @@ export interface CommunityPlugin extends PluginManifest {
   repo: string;
 }
 
-const COMMUNITY_CATALOG_URL =
-  'https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugins.json';
+const COMMUNITY_CATALOG_URL = process.env.COMMUNITY_PLUGIN_CATALOG_URL
+  ?? 'https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugins.json';
 let catalogCache: { expiresAt: number; plugins: CommunityPlugin[] } | null = null;
 
 async function pluginsDir(): Promise<string> {

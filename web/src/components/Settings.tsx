@@ -574,8 +574,16 @@ function PluginBrowser({ installed, onClose }: { installed: any[]; onClose: () =
   const [error, setError] = useState('');
   const [installing, setInstalling] = useState<string | null>(null);
   const [installedIds, setInstalledIds] = useState(() => new Set(installed.map((plugin) => plugin.id)));
+  const loadCatalog = () => {
+    setLoading(true);
+    setError('');
+    api.listCommunityPlugins()
+      .then((result) => setCatalog(result.plugins))
+      .catch((reason) => setError(reason.message))
+      .finally(() => setLoading(false));
+  };
   useEffect(() => {
-    api.listCommunityPlugins().then((result) => setCatalog(result.plugins)).catch((reason) => setError(reason.message)).finally(() => setLoading(false));
+    loadCatalog();
   }, []);
   const needle = query.trim().toLowerCase();
   const filtered = catalog.filter((plugin) => (!installedOnly || installedIds.has(plugin.id)) && (!needle || `${plugin.name} ${plugin.description ?? ''} ${plugin.author ?? ''}`.toLowerCase().includes(needle)));
@@ -597,7 +605,7 @@ function PluginBrowser({ installed, onClose }: { installed: any[]; onClose: () =
           <label className="installed-only"><span>Show installed only</span><Switch value={installedOnly} onChange={setInstalledOnly} label="Show installed only" /></label>
           <div className="community-count">{loading ? 'Loading plugins…' : `Showing ${filtered.length.toLocaleString()} plugins`}</div>
         </div>
-        {error && <div className="plugin-browser-error">{error}</div>}
+        {error && <div className="plugin-browser-error"><span>{error}</span><button className="btn secondary" onClick={loadCatalog}>Try again</button></div>}
         <div className="plugin-grid">
           {filtered.map((plugin) => (
             <article className="plugin-card" key={plugin.id}>
@@ -610,7 +618,7 @@ function PluginBrowser({ installed, onClose }: { installed: any[]; onClose: () =
               </div>
             </article>
           ))}
-          {!loading && !filtered.length && <div className="plugin-empty">No community plugin matches your search.</div>}
+          {!loading && !error && !filtered.length && <div className="plugin-empty">No community plugin matches your search.</div>}
         </div>
       </div>
     </div>

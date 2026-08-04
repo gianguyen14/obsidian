@@ -1023,7 +1023,7 @@ body.wo-col-resizing .sidebar, body.wo-col-resizing .right-sidebar { transition:
 .community-search { width: min(420px, 100%); background: var(--bg-secondary); }
 .installed-only { display: flex; align-items: center; gap: 10px; margin-top: 9px; color: var(--text-muted); font-size: 12px; }
 .community-count { color: var(--text-faint); font-size: 12px; margin-top: 9px; }
-.plugin-browser-error { padding: 9px 16px; color: #e5534b; background: color-mix(in srgb, #e5534b 10%, transparent); }
+.plugin-browser-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 16px; color: #e5534b; background: color-mix(in srgb, #e5534b 10%, transparent); }
 .plugin-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 12px; overflow-y: auto; align-content: start; }
 .plugin-card { min-height: 168px; display: flex; flex-direction: column; padding: 14px; border: 1px solid var(--bg-modifier-border); border-radius: 9px; background: var(--bg-secondary); }
 .plugin-card-title { display: flex; align-items: center; gap: 6px; }

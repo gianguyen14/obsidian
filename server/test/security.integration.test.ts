@@ -93,6 +93,13 @@ test('security-sensitive setup, session and vault boundaries', async () => {
     ALLOWED_ROOTS: vaultDir,
     WEBOBSIDIAN_PASSWORD: '',
     UPLOAD_MAX_BYTES: '1024',
+    COMMUNITY_PLUGIN_CATALOG_URL: `data:application/json,${encodeURIComponent(JSON.stringify([{
+      id: 'catalog-smoke',
+      name: 'Catalog smoke',
+      author: 'WebObsidian',
+      description: 'Integration fixture',
+      repo: 'webobsidian/catalog-smoke',
+    }]))}`,
     NODE_ENV: 'production',
   });
   await waitForHealth(base, child);
@@ -258,6 +265,20 @@ test('security-sensitive setup, session and vault boundaries', async () => {
 
   const installedPlugins = await jsonRequest(base, '/api/plugins/', { headers: { Cookie: oldCookie } });
   assert.equal(installedPlugins.status, 200);
+
+  // Browse uses the collection route because some production reverse proxies
+  // reject deeper plugin API paths. Keep the original endpoint working too.
+  for (const pathname of ['/api/plugins/?view=catalog', '/api/plugins/catalog']) {
+    const catalog = await jsonRequest(base, pathname, { headers: { Cookie: oldCookie } });
+    assert.equal(catalog.status, 200);
+    assert.deepEqual((await catalog.json() as { plugins: unknown[] }).plugins, [{
+      id: 'catalog-smoke',
+      name: 'Catalog smoke',
+      author: 'WebObsidian',
+      description: 'Integration fixture',
+      repo: 'webobsidian/catalog-smoke',
+    }]);
+  }
   assert.equal((await installedPlugins.json() as { plugins: { id: string }[] }).plugins[0]?.id, 'runtime-smoke');
   const enabledPlugin = await jsonRequest(base, '/api/plugins/runtime-smoke/enabled', {
     method: 'PATCH', headers: { Cookie: oldCookie }, body: JSON.stringify({ enabled: true }),

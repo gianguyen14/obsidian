@@ -310,7 +310,9 @@ export const api = {
 
   // plugins
   listPlugins: () => req<{ plugins: any[] }>('/api/plugins/'),
-  listCommunityPlugins: () => req<{ plugins: any[] }>('/api/plugins/catalog'),
+  // Use the already-established collection endpoint. A few reverse-proxy
+  // configurations return a proxy-level 404 for the deeper `/catalog` path.
+  listCommunityPlugins: () => req<{ plugins: any[] }>('/api/plugins/?view=catalog'),
   installPlugin: (repo: string) =>
     req<{ plugin: any }>('/api/plugins/install', { method: 'POST', body: JSON.stringify({ repo }) }),
   setPluginEnabled: (id: string, enabled: boolean) =>

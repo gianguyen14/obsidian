@@ -8,7 +8,16 @@ import * as plugins from '../services/plugins.js';
 export const pluginsRouter = Router();
 pluginsRouter.use(requireAuth);
 
-pluginsRouter.get('/', asyncHandler(async (_req, res) => res.json({ plugins: await plugins.listInstalled() })));
+pluginsRouter.get('/', asyncHandler(async (req, res) => {
+  // Keep catalog discovery on the same endpoint that lists installed plugins.
+  // Some reverse proxies only forward the exact `/api/plugins/` location and
+  // return their own 404 for deeper paths such as `/api/plugins/catalog`.
+  if (req.query.view === 'catalog') {
+    res.json({ plugins: await plugins.listCommunityPlugins() });
+    return;
+  }
+  res.json({ plugins: await plugins.listInstalled() });
+}));
 
 pluginsRouter.get(
   '/catalog',
