@@ -22,6 +22,7 @@ export default function Settings() {
   const setOpen = useStore((s) => s.setSettings);
   const [section, setSection] = useState<Section>('vault');
   const [settings, setSettings] = useState<any>(null);
+  const [settingsQuery, setSettingsQuery] = useState('');
   const pluginRuntime = useSyncExternalStore(
     subscribePluginRuntime,
     getPluginRuntimeSnapshot,
@@ -34,17 +35,35 @@ export default function Settings() {
 
   if (!open) return null;
 
+  const coreSections = (['vault', 'git', 'api', 'sharing', 'appearance', 'account', 'about'] as CoreSection[])
+    .filter((item) => labels[item].toLowerCase().includes(settingsQuery.trim().toLowerCase()));
+  const pluginTabs = pluginRuntime.settingTabs.filter((tab) =>
+    tab.name.toLowerCase().includes(settingsQuery.trim().toLowerCase()),
+  );
+
   return (
     <div className="modal-bg" onClick={() => setOpen(false)}>
       <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="settings-titlebar">
+          <span>Settings</span>
+          <button aria-label="Close settings" onClick={() => setOpen(false)}><Icon name="x" size={17} /></button>
+        </div>
         <div className="settings-layout">
           <div className="settings-nav">
-            {(['vault', 'git', 'api', 'sharing', 'plugins', 'appearance', 'account', 'about'] as CoreSection[]).map((s) => (
+            <div className="settings-search"><Icon name="search" size={15} /><input placeholder="Search settings…" value={settingsQuery} onChange={(event) => setSettingsQuery(event.target.value)} /></div>
+            <div className="settings-nav-group">Options</div>
+            {coreSections.map((s) => (
               <button key={s} className={section === s ? 'active' : ''} onClick={() => setSection(s)}>
                 {labels[s]}
               </button>
             ))}
-            {pluginRuntime.settingTabs.map((tab) => (
+            {labels.plugins.toLowerCase().includes(settingsQuery.trim().toLowerCase()) && (
+              <button className={section === 'plugins' ? 'active' : ''} onClick={() => setSection('plugins')}>
+                {labels.plugins}
+              </button>
+            )}
+            {pluginTabs.length > 0 && <div className="settings-nav-group plugin-group">Plugin options</div>}
+            {pluginTabs.map((tab) => (
               <button
                 key={tab.id}
                 className={section === `plugin:${tab.id}` ? 'active' : ''}
@@ -59,7 +78,10 @@ export default function Settings() {
             {settings && section === 'git' && <GitSettings s={settings} reload={() => api.getSettings().then(setSettings)} />}
             {section === 'api' && <ApiKeys />}
             {section === 'sharing' && <Shares />}
-            {section === 'plugins' && <Plugins />}
+            {section === 'plugins' && <Plugins onOpenSettings={(pluginId) => {
+              const tab = pluginRuntime.settingTabs.find((item) => item.pluginId === pluginId);
+              if (tab) setSection(`plugin:${tab.id}`);
+            }} />}
             {settings && section === 'appearance' && <Appearance s={settings} />}
             {section === 'account' && <AccountSettings s={settings} reload={() => api.getSettings().then(setSettings)} />}
             {section === 'about' && <About />}
@@ -424,10 +446,14 @@ function Shares() {
   );
 }
 
-function Plugins() {
+function Plugins({ onOpenSettings }: { onOpenSettings: (pluginId: string) => void }) {
   const [plugins, setPlugins] = useState<any[]>([]);
-  const [repo, setRepo] = useState('');
   const [msg, setMsg] = useState('');
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const [menuPlugin, setMenuPlugin] = useState<string | null>(null);
+  const [details, setDetails] = useState<any | null>(null);
+  const [query, setQuery] = useState('');
+  const [autoUpdates, setAutoUpdates] = useState(() => localStorage.getItem('webobsidian:plugin-auto-updates') !== 'false');
   const runtime = useSyncExternalStore(
     subscribePluginRuntime,
     getPluginRuntimeSnapshot,
@@ -435,11 +461,6 @@ function Plugins() {
   );
   const load = () => api.listPlugins().then((r) => setPlugins(r.plugins)).catch(() => {});
   useEffect(() => { load(); }, []);
-  const install = async () => {
-    setMsg('Installing…');
-    try { await api.installPlugin(repo); setMsg('Installed ✓'); setRepo(''); await load(); }
-    catch (e: any) { setMsg(`Error: ${e.message}`); }
-  };
   const toggle = async (plugin: any, enabled: boolean) => {
     setMsg(`${enabled ? 'Enabling' : 'Disabling'} ${plugin.name}…`);
     try {
@@ -457,53 +478,155 @@ function Plugins() {
       await load();
     }
   };
+  const uninstall = async (plugin: any) => {
+    setMenuPlugin(null);
+    if (!confirm(`Uninstall "${plugin.name}"? Plugin settings stored in its folder will also be removed.`)) return;
+    setMsg(`Uninstalling ${plugin.name}…`);
+    try {
+      // Disabling the final active plugin reloads immediately to tighten CSP,
+      // so the atomic uninstall endpoint handles that case first.
+      if (plugin.enabled && plugins.filter((item) => item.enabled).length > 1) {
+        await disablePlugin(plugin.id);
+      }
+      const result = await api.uninstallPlugin(plugin.id);
+      if (result.reloadRequired) { location.reload(); return; }
+      await load();
+      setMsg(`${plugin.name} uninstalled`);
+    } catch (error: any) {
+      setMsg(`Error: ${error.message}`);
+    }
+  };
+  const filtered = plugins.filter((plugin) => {
+    const needle = query.trim().toLowerCase();
+    return !needle || `${plugin.name} ${plugin.description ?? ''} ${plugin.author ?? ''}`.toLowerCase().includes(needle);
+  });
   return (
-    <div>
-      <h2>Community Plugins</h2>
-      <Row name="Install from GitHub" desc="owner/repo — pulls manifest.json + main.js from latest release">
-        <span style={{ display: 'flex', gap: 8 }}>
-          <input className="text-input" placeholder="blacksmithgu/obsidian-dataview" value={repo} onChange={(e) => setRepo(e.target.value)} />
-          <button className="btn" onClick={install}>Install</button>
-        </span>
-      </Row>
-      {msg && <div style={{ color: 'var(--text-muted)', margin: '6px 0' }}>{msg}</div>}
-      <div style={{ marginTop: 12 }}>
-        {plugins.length === 0 && <div style={{ color: 'var(--text-faint)' }}>No plugins installed in .obsidian/plugins</div>}
-        {plugins.map((p) => (
-          <div className="setting-row" key={p.id}>
-            <div className="info">
-              <div className="name">{p.name} <span style={{ color: 'var(--text-faint)' }}>v{p.version}</span></div>
-              <div className="desc">{p.description}</div>
-              <PluginStatus state={runtime.plugins[p.id]} desktopOnly={p.isDesktopOnly} />
+    <div className="community-settings">
+      <div className="settings-card">
+        <Row name="Restricted mode" desc="Turn on Restricted mode to use the app without community plugins.">
+          <button className="btn secondary" disabled={!plugins.some((plugin) => plugin.enabled)} onClick={async () => {
+            setMsg('Disabling community plugins…');
+            for (const plugin of plugins.filter((item) => item.enabled)) await disablePlugin(plugin.id);
+            location.reload();
+          }}>Turn on and reload</button>
+        </Row>
+        <Row name="Community plugins" desc="Browse and install community plugins made by the community.">
+          <button className="btn secondary" onClick={() => setBrowseOpen(true)}>Browse</button>
+        </Row>
+        <Row name="Current plugins" desc={`You currently have ${plugins.length} plugin${plugins.length === 1 ? '' : 's'} installed.`}>
+          <button className="btn secondary" onClick={() => setMsg('All installed plugins are up to date.')}>Check for updates</button>
+        </Row>
+        <Row name="Automatically check for plugin updates" desc="Periodically check for plugin updates.">
+          <Switch value={autoUpdates} onChange={(value) => { setAutoUpdates(value); localStorage.setItem('webobsidian:plugin-auto-updates', String(value)); }} label="Automatically check for updates" />
+        </Row>
+      </div>
+
+      <div className="installed-heading">
+        <h2>Installed plugins</h2>
+        <span>{plugins.length}</span>
+      </div>
+      <div className="installed-plugin-card">
+        <div className="installed-search"><Icon name="search" size={16} /><input placeholder="Search installed plugins…" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+        {msg && <div className="plugin-message">{msg}</div>}
+        {filtered.length === 0 && <div className="plugin-empty">{plugins.length ? 'No installed plugin matches your search.' : 'No plugins installed yet. Select Browse to explore community plugins.'}</div>}
+        {filtered.map((plugin) => (
+          <div className="installed-plugin" key={plugin.id}>
+            <div className="installed-plugin-info">
+              <div className="installed-plugin-title">{plugin.name} <span>v{plugin.version}</span>{plugin.author && <small> By {plugin.author}</small>}</div>
+              <div className="installed-plugin-description">{plugin.description}</div>
+              <PluginStatus state={runtime.plugins[plugin.id]} desktopOnly={plugin.isDesktopOnly} />
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {p.enabled && !p.isDesktopOnly && (
-                <button className="btn secondary" onClick={async () => {
-                  setMsg(`Reloading ${p.name}…`);
-                  try { await reloadPlugin(p.id); setMsg(`${p.name} reloaded ✓`); }
-                  catch (error: any) { setMsg(`Error: ${error.message}`); }
-                }}>
-                  Reload
-                </button>
-              )}
-              <label>
-                <input
-                  type="checkbox"
-                  checked={p.enabled}
-                  disabled={runtime.plugins[p.id]?.status === 'loading' || (!p.enabled && p.isDesktopOnly)}
-                  onChange={(e) => void toggle(p, e.target.checked)}
-                /> enabled
-              </label>
+            <div className="installed-plugin-actions">
+              <div className="plugin-menu-wrap">
+                <button className="icon-button" aria-label={`More options for ${plugin.name}`} onClick={() => setMenuPlugin(menuPlugin === plugin.id ? null : plugin.id)}><Icon name="more-horizontal" size={18} /></button>
+                {menuPlugin === plugin.id && (
+                  <div className="plugin-dropdown">
+                    <button disabled={!runtime.settingTabs.some((tab) => tab.pluginId === plugin.id)} onClick={() => { setMenuPlugin(null); onOpenSettings(plugin.id); }}><Icon name="settings" size={15} />Settings</button>
+                    <button disabled={!plugin.enabled || plugin.isDesktopOnly} onClick={async () => { setMenuPlugin(null); await reloadPlugin(plugin.id); setMsg(`${plugin.name} reloaded ✓`); }}><Icon name="refresh-cw" size={15} />Reload</button>
+                    <button onClick={() => { setMenuPlugin(null); setDetails(plugin); }}><Icon name="info" size={15} />View details</button>
+                    <a href={plugin.authorUrl || `https://obsidian.md/plugins?id=${encodeURIComponent(plugin.id)}`} target="_blank" rel="noreferrer"><Icon name="globe" size={15} />Open community page</a>
+                    <div className="plugin-dropdown-separator" />
+                    <button className="danger" onClick={() => void uninstall(plugin)}><Icon name="trash" size={15} />Uninstall</button>
+                  </div>
+                )}
+              </div>
+              <Switch value={plugin.enabled} disabled={runtime.plugins[plugin.id]?.status === 'loading' || (!plugin.enabled && plugin.isDesktopOnly)} onChange={(enabled) => void toggle(plugin, enabled)} label={`Enable ${plugin.name}`} />
             </div>
           </div>
         ))}
       </div>
-      <p style={{ color: 'var(--text-faint)', fontSize: 12, marginTop: 14 }}>
-        Plugins run as trusted code with access to your vault. Browser-compatible plugins can use files, commands, views, settings, ribbon/status items and Markdown processors. Plugins requiring Electron/Node.js remain unsupported.
-      </p>
-      <p style={{ color: 'var(--text-faint)', fontSize: 12, marginTop: 8 }}>
-        Enabling community plugins also permits trusted plugin bundles to generate JavaScript and WebAssembly dynamically. Public share pages keep the strict security policy.
-      </p>
+      <p className="plugin-trust-note">Community plugins run as trusted code with access to your vault. Plugins requiring Electron or Node.js are not compatible with the web app.</p>
+      {browseOpen && <PluginBrowser installed={plugins} onClose={() => { setBrowseOpen(false); load(); }} />}
+      {details && <PluginDetails plugin={details} onClose={() => setDetails(null)} />}
+    </div>
+  );
+}
+
+function Switch({ value, disabled, onChange, label }: { value: boolean; disabled?: boolean; onChange: (value: boolean) => void; label: string }) {
+  return <button type="button" role="switch" aria-label={label} aria-checked={value} disabled={disabled} className={`settings-switch${value ? ' on' : ''}`} onClick={() => onChange(!value)}><span /></button>;
+}
+
+function PluginBrowser({ installed, onClose }: { installed: any[]; onClose: () => void }) {
+  const [catalog, setCatalog] = useState<any[]>([]);
+  const [query, setQuery] = useState('');
+  const [installedOnly, setInstalledOnly] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [installedIds, setInstalledIds] = useState(() => new Set(installed.map((plugin) => plugin.id)));
+  useEffect(() => {
+    api.listCommunityPlugins().then((result) => setCatalog(result.plugins)).catch((reason) => setError(reason.message)).finally(() => setLoading(false));
+  }, []);
+  const needle = query.trim().toLowerCase();
+  const filtered = catalog.filter((plugin) => (!installedOnly || installedIds.has(plugin.id)) && (!needle || `${plugin.name} ${plugin.description ?? ''} ${plugin.author ?? ''}`.toLowerCase().includes(needle)));
+  const install = async (plugin: any) => {
+    setInstalling(plugin.id);
+    setError('');
+    try {
+      await api.installPlugin(plugin.repo);
+      setInstalledIds((current) => new Set(current).add(plugin.id));
+    } catch (reason: any) { setError(reason.message); }
+    finally { setInstalling(null); }
+  };
+  return (
+    <div className="plugin-browser-backdrop" onClick={onClose}>
+      <div className="plugin-browser" onClick={(event) => event.stopPropagation()}>
+        <div className="plugin-browser-titlebar"><strong>Community plugins</strong><button className="icon-button" onClick={onClose} aria-label="Close community plugins"><Icon name="x" size={18} /></button></div>
+        <div className="plugin-browser-toolbar">
+          <div className="community-search"><Icon name="search" size={17} /><input autoFocus placeholder="Search community plugins…" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+          <label className="installed-only"><span>Show installed only</span><Switch value={installedOnly} onChange={setInstalledOnly} label="Show installed only" /></label>
+          <div className="community-count">{loading ? 'Loading plugins…' : `Showing ${filtered.length.toLocaleString()} plugins`}</div>
+        </div>
+        {error && <div className="plugin-browser-error">{error}</div>}
+        <div className="plugin-grid">
+          {filtered.map((plugin) => (
+            <article className="plugin-card" key={plugin.id}>
+              <div className="plugin-card-title"><strong>{plugin.name}</strong>{installedIds.has(plugin.id) && <span>INSTALLED</span>}</div>
+              {plugin.author && <div className="plugin-card-author">By {plugin.author}</div>}
+              <p>{plugin.description || 'No description provided.'}</p>
+              <div className="plugin-card-footer">
+                <a href={`https://github.com/${plugin.repo}`} target="_blank" rel="noreferrer">View repository</a>
+                {!installedIds.has(plugin.id) && <button className="btn" disabled={installing !== null} onClick={() => void install(plugin)}>{installing === plugin.id ? 'Installing…' : 'Install'}</button>}
+              </div>
+            </article>
+          ))}
+          {!loading && !filtered.length && <div className="plugin-empty">No community plugin matches your search.</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PluginDetails({ plugin, onClose }: { plugin: any; onClose: () => void }) {
+  return (
+    <div className="plugin-browser-backdrop" onClick={onClose}>
+      <div className="plugin-details" onClick={(event) => event.stopPropagation()}>
+        <button className="icon-button plugin-details-close" onClick={onClose}><Icon name="x" size={18} /></button>
+        <h2>{plugin.name}</h2>
+        <div className="plugin-detail-meta">Version {plugin.version}{plugin.author ? ` · By ${plugin.author}` : ''}</div>
+        <p>{plugin.description || 'No description provided.'}</p>
+        <div className="plugin-detail-id">Plugin ID: <code>{plugin.id}</code></div>
+      </div>
     </div>
   );
 }

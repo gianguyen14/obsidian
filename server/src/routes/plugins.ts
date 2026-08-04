@@ -10,6 +10,11 @@ pluginsRouter.use(requireAuth);
 
 pluginsRouter.get('/', asyncHandler(async (_req, res) => res.json({ plugins: await plugins.listInstalled() })));
 
+pluginsRouter.get(
+  '/catalog',
+  asyncHandler(async (_req, res) => res.json({ plugins: await plugins.listCommunityPlugins() })),
+);
+
 pluginsRouter.post(
   '/install',
   asyncHandler(async (req, res) => {
@@ -19,6 +24,13 @@ pluginsRouter.post(
       return;
     }
     res.json({ plugin: await plugins.installFromGithub(repo) });
+  }),
+);
+
+pluginsRouter.delete(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    res.json({ ok: true, ...await plugins.uninstall(req.params.id) });
   }),
 );
 

@@ -29,6 +29,14 @@ export interface InstalledPlugin extends PluginManifest {
   dir: string; // vault-relative
 }
 
+export interface CommunityPlugin extends PluginManifest {
+  repo: string;
+}
+
+const COMMUNITY_CATALOG_URL =
+  'https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugins.json';
+let catalogCache: { expiresAt: number; plugins: CommunityPlugin[] } | null = null;
+
 async function pluginsDir(): Promise<string> {
   const root = await getVaultRoot();
   return path.join(root, '.obsidian', 'plugins');
@@ -76,6 +84,23 @@ export async function listInstalled(): Promise<InstalledPlugin[]> {
     }
   }
   return out;
+}
+
+/** Official Obsidian community plugin catalog, cached to avoid a GitHub request
+ * every time the Browse window is opened. */
+export async function listCommunityPlugins(): Promise<CommunityPlugin[]> {
+  if (catalogCache && catalogCache.expiresAt > Date.now()) return catalogCache.plugins;
+  const response = await fetch(COMMUNITY_CATALOG_URL, {
+    headers: { 'User-Agent': 'WebObsidian' },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`Community plugin catalog failed: ${response.status}`);
+  const raw = await response.json() as CommunityPlugin[];
+  const plugins = raw
+    .filter((plugin) => plugin?.id && plugin?.name && plugin?.repo)
+    .map((plugin) => ({ ...plugin, id: assertSafeId(plugin.id) }));
+  catalogCache = { expiresAt: Date.now() + 15 * 60_000, plugins };
+  return plugins;
 }
 
 export async function getPluginAsset(
@@ -204,6 +229,18 @@ export async function installFromGithub(repo: string): Promise<InstalledPlugin> 
   const found = installed.find((p) => p.id === id);
   if (!found) throw new Error('Install verification failed');
   return found;
+}
+
+export async function uninstall(id: string): Promise<{ reloadRequired: boolean }> {
+  const safeId = assertSafeId(id);
+  const before = await getSettings();
+  const wasEnabled = before.plugins.enabled.includes(safeId);
+  await updateSettings((draft) => {
+    draft.plugins.enabled = draft.plugins.enabled.filter((pluginId) => pluginId !== safeId);
+    draft.plugins.installed = draft.plugins.installed.filter((pluginId) => pluginId !== safeId);
+  });
+  await fs.rm(path.join(await pluginsDir(), safeId), { recursive: true, force: true });
+  return { reloadRequired: wasEnabled && before.plugins.enabled.length === 1 };
 }
 
 async function fetchText(url: string): Promise<string> {

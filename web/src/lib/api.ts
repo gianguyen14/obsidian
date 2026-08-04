@@ -310,10 +310,13 @@ export const api = {
 
   // plugins
   listPlugins: () => req<{ plugins: any[] }>('/api/plugins/'),
+  listCommunityPlugins: () => req<{ plugins: any[] }>('/api/plugins/catalog'),
   installPlugin: (repo: string) =>
     req<{ plugin: any }>('/api/plugins/install', { method: 'POST', body: JSON.stringify({ repo }) }),
   setPluginEnabled: (id: string, enabled: boolean) =>
     req<{ ok: true; reloadRequired: boolean }>(`/api/plugins/${id}/enabled`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  uninstallPlugin: (id: string) =>
+    req<{ ok: true; reloadRequired: boolean }>(`/api/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   getPluginData: (id: string) =>
     req<{ data: unknown }>(`/api/plugins/${encodeURIComponent(id)}/data`),
   putPluginData: (id: string, data: unknown) =>

@@ -7,6 +7,8 @@ changes. The format is loosely based on [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- Obsidian-style Community plugins manager with grouped settings, installed-plugin
+  actions, official catalog browsing/search, one-click install and safe uninstall.
 - Browser-compatible Obsidian community-plugin runtime: commands/hotkeys, ribbon and
   status items, custom views/extensions, plugin settings, Markdown processors, vault
   APIs/events, plugin `data.json`, nested assets and load diagnostics.
