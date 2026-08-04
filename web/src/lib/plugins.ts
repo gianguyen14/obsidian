@@ -944,6 +944,10 @@ export class FileManager {
 
 // ---- UI components exposed to plugins ------------------------------------
 
+function getPluginUiHost(): HTMLElement {
+  return (document.querySelector('.theme-dark, .theme-light') as HTMLElement | null) ?? document.body;
+}
+
 export class Notice {
   noticeEl: HTMLElement;
   constructor(message: string | DocumentFragment, timeout = 4000) {
@@ -951,7 +955,7 @@ export class Notice {
     this.noticeEl.className = 'toast plugin-notice';
     if (typeof message === 'string') this.noticeEl.textContent = message;
     else this.noticeEl.appendChild(message);
-    document.body.appendChild(this.noticeEl);
+    getPluginUiHost().appendChild(this.noticeEl);
     if (timeout > 0) window.setTimeout(() => this.hide(), timeout);
   }
   setMessage(message: string | DocumentFragment): this { setNodeContent(this.noticeEl, message); return this; }
@@ -961,21 +965,30 @@ export class Notice {
 export class Modal {
   containerEl = document.createElement('div');
   modalEl = document.createElement('div');
+  closeButtonEl = document.createElement('button');
   titleEl = document.createElement('div');
   contentEl = document.createElement('div');
   scope = new Scope();
   constructor(public app: App) {
     this.containerEl.className = 'modal-bg plugin-modal-bg';
     this.modalEl.className = 'modal plugin-modal';
+    this.modalEl.setAttribute('role', 'dialog');
+    this.modalEl.setAttribute('aria-modal', 'true');
+    this.closeButtonEl.className = 'modal-close-button';
+    this.closeButtonEl.type = 'button';
+    this.closeButtonEl.setAttribute('aria-label', 'Close');
+    this.closeButtonEl.textContent = '×';
     this.titleEl.className = 'modal-title';
     this.contentEl.className = 'modal-content';
-    this.modalEl.append(this.titleEl, this.contentEl);
+    this.modalEl.append(this.closeButtonEl, this.titleEl, this.contentEl);
     this.containerEl.appendChild(this.modalEl);
+    this.closeButtonEl.addEventListener('click', () => this.close());
     this.containerEl.addEventListener('mousedown', (event) => { if (event.target === this.containerEl) this.close(); });
+    this.scope.register([], 'Escape', () => this.close());
   }
   setTitle(title: string): this { this.titleEl.textContent = title; return this; }
   setContent(content: string | DocumentFragment): this { setNodeContent(this.contentEl, content); return this; }
-  open(): void { document.body.appendChild(this.containerEl); this.scope.activate(); this.onOpen(); }
+  open(): void { getPluginUiHost().appendChild(this.containerEl); this.scope.activate(); this.onOpen(); }
   close(): void { this.onClose(); this.scope.deactivate(); this.containerEl.remove(); }
   onOpen(): void {}
   onClose(): void {}
@@ -992,7 +1005,7 @@ export abstract class PopoverSuggest<T> {
   abstract renderSuggestion(value: T, el: HTMLElement): void;
   abstract selectSuggestion(value: T, evt: MouseEvent | KeyboardEvent): void;
   open(): void {
-    if (!this.suggestEl.isConnected) document.body.appendChild(this.suggestEl);
+    if (!this.suggestEl.isConnected) getPluginUiHost().appendChild(this.suggestEl);
     this.scope.activate();
   }
   close(): void {
@@ -1092,15 +1105,28 @@ export abstract class EditorSuggest<T> extends PopoverSuggest<T> {
 
 export class SuggestModal<T> extends Modal {
   inputEl = document.createElement('input');
+  inputContainerEl = document.createElement('div');
   resultContainerEl = document.createElement('div');
   emptyStateText = 'No matches found';
   limit = 100;
+  private suggestions: T[] = [];
+  private selectedIndex = 0;
+  private refreshId = 0;
   constructor(app: App) {
     super(app);
-    this.inputEl.className = 'palette-input';
-    this.resultContainerEl.className = 'palette-list';
-    this.contentEl.append(this.inputEl, this.resultContainerEl);
+    this.containerEl.classList.add('plugin-suggest-modal-bg');
+    this.modalEl.classList.add('mod-search', 'plugin-suggest-modal');
+    this.contentEl.classList.add('plugin-suggest-modal-content');
+    this.inputContainerEl.className = 'prompt-input-container plugin-suggest-input-container';
+    this.inputEl.className = 'prompt-input plugin-suggest-input';
+    this.inputEl.type = 'text';
+    this.inputEl.autocomplete = 'off';
+    this.inputEl.spellcheck = false;
+    this.resultContainerEl.className = 'suggestion-container mod-search-suggestion plugin-suggest-results';
+    this.inputContainerEl.appendChild(this.inputEl);
+    this.contentEl.append(this.inputContainerEl, this.resultContainerEl);
     this.inputEl.addEventListener('input', () => void this.refresh());
+    this.inputEl.addEventListener('keydown', (event) => this.onKeyDown(event));
   }
   setPlaceholder(value: string): void { this.inputEl.placeholder = value; }
   setInstructions(_instructions: any[]): void {}
@@ -1108,25 +1134,53 @@ export class SuggestModal<T> extends Modal {
   renderSuggestion(value: T, el: HTMLElement): void { el.textContent = this.getItemText(value); }
   getItemText(value: T): string { return String(value); }
   onChooseSuggestion(_item: T, _evt: MouseEvent | KeyboardEvent): void {}
-  selectSuggestion(_value: any, _evt: any): void {}
+  selectSuggestion(value: T, evt: MouseEvent | KeyboardEvent): void { this.onChooseSuggestion(value, evt); }
   override open(): void { super.open(); void this.refresh(); this.inputEl.focus(); }
+  private onKeyDown(event: KeyboardEvent): void {
+    if (!this.suggestions.length) return;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      this.selectedIndex = (this.selectedIndex + direction + this.suggestions.length) % this.suggestions.length;
+      this.updateSelectedRow(true);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      this.choose(this.suggestions[this.selectedIndex], event);
+    }
+  }
+  private choose(value: T | undefined, event: MouseEvent | KeyboardEvent): void {
+    if (value === undefined) return;
+    this.selectSuggestion(value, event);
+    this.close();
+  }
+  private updateSelectedRow(scrollIntoView = false): void {
+    const rows = [...this.resultContainerEl.querySelectorAll<HTMLElement>('.suggestion-item')];
+    rows.forEach((row, index) => row.classList.toggle('is-selected', index === this.selectedIndex));
+    if (scrollIntoView) rows[this.selectedIndex]?.scrollIntoView({ block: 'nearest' });
+  }
   private async refresh(): Promise<void> {
+    const refreshId = ++this.refreshId;
     const values = (await this.getSuggestions(this.inputEl.value)).slice(0, this.limit);
+    if (refreshId !== this.refreshId) return;
+    this.suggestions = values;
+    this.selectedIndex = 0;
     this.resultContainerEl.replaceChildren();
     if (!values.length) {
       const empty = document.createElement('div');
-      empty.className = 'palette-item';
+      empty.className = 'suggestion-empty';
       empty.textContent = this.emptyStateText;
       this.resultContainerEl.appendChild(empty);
       return;
     }
-    for (const value of values) {
+    values.forEach((value, index) => {
       const row = document.createElement('div');
-      row.className = 'palette-item';
+      row.className = 'suggestion-item';
+      row.classList.toggle('is-selected', index === this.selectedIndex);
       this.renderSuggestion(value, row);
-      row.addEventListener('click', (event) => { this.onChooseSuggestion(value, event); this.close(); });
+      row.addEventListener('mouseenter', () => { this.selectedIndex = index; this.updateSelectedRow(); });
+      row.addEventListener('click', (event) => this.choose(value, event));
       this.resultContainerEl.appendChild(row);
-    }
+    });
   }
 }
 

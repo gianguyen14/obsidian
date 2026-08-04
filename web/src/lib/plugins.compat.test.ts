@@ -15,6 +15,7 @@ import {
   Plugin,
   PluginSettingTab,
   Setting,
+  SuggestModal,
   WorkspaceLeaf,
 } from './plugins';
 import { useStore } from './store';
@@ -104,6 +105,36 @@ describe('community plugin compatibility runtime', () => {
 
     await vi.waitFor(() => expect(confirmed).toBe(true));
     await vi.waitFor(() => expect(modal.containerEl.isConnected).toBe(false));
+  });
+
+  it('renders searchable plugin modals inside the active theme with Obsidian selection behavior', async () => {
+    const themeRoot = document.createElement('div');
+    themeRoot.className = 'theme-dark';
+    document.body.appendChild(themeRoot);
+    let chosen = '';
+
+    class TemplateSuggestModal extends SuggestModal<string> {
+      override getSuggestions(query: string): string[] {
+        return ['Daily/2026-08-04', 'TaskNotes/Start Here', 'Untitled']
+          .filter((item) => item.toLowerCase().includes(query.toLowerCase()));
+      }
+      override onChooseSuggestion(item: string): void { chosen = item; }
+    }
+
+    const modal = new TemplateSuggestModal(getPluginApp());
+    modal.setPlaceholder('Type name of a template...');
+    modal.open();
+
+    await vi.waitFor(() => expect(modal.resultContainerEl.querySelectorAll('.suggestion-item')).toHaveLength(3));
+    expect(themeRoot.contains(modal.containerEl)).toBe(true);
+    expect(modal.modalEl.classList.contains('plugin-suggest-modal')).toBe(true);
+    expect(modal.resultContainerEl.querySelector('.suggestion-item.is-selected')?.textContent).toBe('Daily/2026-08-04');
+
+    modal.inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(modal.resultContainerEl.querySelector('.suggestion-item.is-selected')?.textContent).toBe('TaskNotes/Start Here');
+    modal.inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(chosen).toBe('TaskNotes/Start Here');
+    expect(modal.containerEl.isConnected).toBe(false);
   });
 
   it('provides the browser modules externalized by Excalidraw and TaskNotes', () => {
