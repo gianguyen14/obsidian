@@ -1,71 +1,39 @@
-# WebObsidian Desktop (Electron)
+# WebObsidian Desktop (Electron, local-first)
 
-Packages WebObsidian as an installable desktop app for **macOS / Windows / Linux**
-(arm64 · x64 · ia32). It is a thin **Electron shell** around the unchanged
-`server/` (Express) + `web/` (SPA): the shell spawns the server as a child process
-bound to `127.0.0.1` on a random free port and loads it in a `BrowserWindow`.
+The desktop app packages the complete WebObsidian React UI plus its Express service for
+macOS, Windows, and Linux. The service binds to a random `127.0.0.1` port and owns a local
+vault selected on first launch. It never connects to the hosted web vault implicitly.
 
-Because the server has **no runtime native modules**, the whole server is bundled
-into a single `.mjs` with esbuild, and every CPU arch is produced just by packing
-the matching prebuilt Electron binary — no cross-compilation, no `node-gyp`.
+Web and desktop therefore have independent tabs, active notes, settings, credentials,
+and files. To synchronize notes, configure the same repository in **Settings → GitHub
+Sync** on each installation, then use Pull/Sync (or enable auto-sync).
 
-## How it works
+## Local data
 
-- **First launch** prompts for a vault folder (default `~/Documents/WebObsidianVault`).
-- App data (`settings.json`, search index) lives in Electron's per-user `userData` dir.
-- A random per-install password is generated, passed to the server as
-  `WEBOBSIDIAN_PASSWORD`, and used to **auto-login** — no password prompt.
-- Menu **File → Switch Vault…** changes the vault (relaunches to re-index);
-  **Open Vault/Data Folder** and **Open Logs** help debugging.
-- Git sync needs `git` on the machine; without it the app still works for local editing.
+- `desktop-config.json`: local vault path and per-installation bootstrap secret
+- `server-data/`: local settings, indexes, workspace state, plugin data, and shares
+- `logs/server.log`: embedded-service diagnostics
 
-## Build locally
+These live under Electron's OS-specific user-data directory. The vault itself stays in
+the folder chosen by the user and is not deleted when uninstalling the app.
 
-From the **repo root** (builds web + server first, then the desktop app):
+## Security model
+
+- the embedded service binds only to `127.0.0.1`
+- `contextIsolation` and renderer sandbox enabled; Node integration disabled
+- navigation locked to the embedded loopback origin
+- external HTTP(S) links open in the system browser
+- local session secret and settings files are private to the OS user
+
+## Run and package
+
+From the repository root:
 
 ```bash
 npm install
-npm run desktop          # build everything + launch the app (dev)
-npm run desktop:dist     # build installers for THIS platform → desktop/release/
+npm run desktop
+npm run desktop:dist
 ```
 
-Or directly inside `desktop/` (assumes `npm run build` already ran at the root):
-
-```bash
-npm run build        # esbuild: dist/ (main+preload) + .gen/server/ (server bundle + SPA)
-npm start            # launch with the already-built bundle
-npm run dist         # electron-builder → installers in desktop/release/
-npm run dist:dir     # fast unpacked build (no installer), for smoke testing
-```
-
-> Note: this environment may export `ELECTRON_RUN_AS_NODE=1` globally (Electron then
-> behaves as plain Node and `require('electron')` returns a path). When launching
-> Electron by hand, clear it: `env -u ELECTRON_RUN_AS_NODE electron dist/main.js`.
-> Packaged apps are unaffected. The shell sets `ELECTRON_RUN_AS_NODE=1` only for the
-> server child it spawns.
-
-## Releasing (GitHub Releases)
-
-CI workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs on
-a version tag and builds on three native runners in parallel:
-
-```bash
-npm version patch -w desktop   # or bump versions as you prefer
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Each runner (macOS/Windows/Ubuntu) packages its platform's installers and uploads
-them to a **draft** GitHub Release for the tag. When all three finish, open the draft
-release on GitHub and click **Publish**.
-
-Artifacts:
-
-| Platform | Formats | Arch |
-|----------|---------|------|
-| macOS    | `.dmg`, `.zip`         | arm64, x64 |
-| Windows  | NSIS `.exe`, portable `.exe` | x64, arm64, ia32 |
-| Linux    | `.AppImage`, `.deb`    | x64, arm64 |
-
-The apps are **not code-signed/notarized**, so users will see a Gatekeeper /
-SmartScreen warning on first launch (expected for a free self-hosted build).
+Installers are written to `desktop/release/` for macOS, Windows, and Linux. Release
+packages are currently unsigned.

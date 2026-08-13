@@ -1,5 +1,10 @@
 // Thin fetch wrapper around the WebObsidian server API.
 
+import {
+  fetchCommunityPluginCatalog,
+  fetchCommunityPluginReadme,
+} from './community-plugins';
+
 export interface TreeNode {
   name: string;
   path: string;
@@ -26,6 +31,24 @@ export interface ShareRecord {
   enabled: boolean;
   createdAt: string;
   hasPassword?: boolean;
+}
+
+/** Mirrors server/src/services/metacache.ts — the Obsidian getFileCache() shape. */
+export interface ObsidianPos {
+  start: { line: number; col: number; offset: number };
+  end: { line: number; col: number; offset: number };
+}
+
+export interface ObsidianFileCache {
+  frontmatter?: Record<string, unknown>;
+  frontmatterPosition?: ObsidianPos;
+  frontmatterLinks?: { link: string; original: string; displayText: string; position: ObsidianPos }[];
+  headings: { heading: string; level: number; position: ObsidianPos }[];
+  tags: { tag: string; position: ObsidianPos }[];
+  links: { link: string; original: string; displayText: string; position: ObsidianPos }[];
+  embeds: { link: string; original: string; displayText: string; position: ObsidianPos }[];
+  listItems: { position: ObsidianPos; parent: number; task?: string; id?: string }[];
+  sections: { type: string; position: ObsidianPos }[];
 }
 
 export interface SearchHit {
@@ -56,6 +79,21 @@ export interface GitCommit {
   author: string;
 }
 
+export interface PasskeySummary {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  backedUp: boolean;
+  deviceType: 'singleDevice' | 'multiDevice';
+}
+
+export interface SecurityStatus {
+  totpEnabled: boolean;
+  recoveryCodesRemaining: number;
+  passkeys: PasskeySummary[];
+}
+
 async function req<T>(url: string, opts: RequestInit = {}): Promise<T> {
   const { headers: optHeaders, ...rest } = opts;
   const res = await fetch(url, {
@@ -65,9 +103,6 @@ async function req<T>(url: string, opts: RequestInit = {}): Promise<T> {
     // would drop Content-Type whenever a caller passes its own headers.
     headers: { 'Content-Type': 'application/json', ...(optHeaders ?? {}) },
   });
-  if (res.status === 401) {
-    throw new ApiError('Unauthorized', 401);
-  }
   if (!res.ok) {
     let msg = res.statusText;
     try {
@@ -89,13 +124,34 @@ export class ApiError extends Error {
 
 export const api = {
   // auth
-  authStatus: () => req<{ passwordSet: boolean; mustChangePassword: boolean }>('/auth/status'),
+  authStatus: () =>
+    req<{
+      passwordSet: boolean;
+      mustChangePassword: boolean;
+      totpEnabled: boolean;
+      passkeyEnabled: boolean;
+    }>('/auth/status'),
   setup: (password: string) =>
     req<{ ok: true }>('/auth/setup', { method: 'POST', body: JSON.stringify({ password }) }),
   login: (password: string) =>
-    req<{ ok: true; mustChangePassword: boolean }>('/auth/login', {
+    req<
+      | { ok: true; requiresTwoFactor: false; mustChangePassword: boolean }
+      | { ok: false; requiresTwoFactor: true; twoFactorToken: string }
+    >('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ password }),
+    }),
+  loginTotp: (twoFactorToken: string, code: string) =>
+    req<{ ok: true; method: 'totp' | 'recovery'; recoveryCodesRemaining: number }>(
+      '/auth/login/totp',
+      { method: 'POST', body: JSON.stringify({ twoFactorToken, code }) },
+    ),
+  passkeyLoginOptions: () =>
+    req<{ ceremonyId: string; options: any }>('/auth/passkeys/login/options', { method: 'POST' }),
+  passkeyLoginVerify: (ceremonyId: string, response: unknown) =>
+    req<{ ok: true }>('/auth/passkeys/login/verify', {
+      method: 'POST',
+      body: JSON.stringify({ ceremonyId, response }),
     }),
   logout: () => req<{ ok: true }>('/auth/logout', { method: 'POST' }),
   changePassword: (currentPassword: string, newPassword: string) =>
@@ -104,6 +160,42 @@ export const api = {
       body: JSON.stringify({ currentPassword, newPassword }),
     }),
   me: () => req<{ authenticated: boolean; mustChangePassword: boolean }>('/auth/me'),
+  securityStatus: () => req<SecurityStatus>('/auth/security'),
+  startTotpSetup: (currentPassword: string) =>
+    req<{ setupId: string; secret: string; uri: string }>('/auth/totp/setup/start', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword }),
+    }),
+  verifyTotpSetup: (setupId: string, code: string) =>
+    req<{ ok: true; recoveryCodes: string[] }>('/auth/totp/setup/verify', {
+      method: 'POST',
+      body: JSON.stringify({ setupId, code }),
+    }),
+  disableTotp: (currentPassword: string, code: string) =>
+    req<{ ok: true }>('/auth/totp/disable', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, code }),
+    }),
+  regenerateRecoveryCodes: (currentPassword: string, code: string) =>
+    req<{ ok: true; recoveryCodes: string[] }>('/auth/totp/recovery-codes', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, code }),
+    }),
+  passkeyRegistrationOptions: (currentPassword: string, name: string) =>
+    req<{ ceremonyId: string; options: any }>('/auth/passkeys/register/options', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, name }),
+    }),
+  passkeyRegistrationVerify: (ceremonyId: string, response: unknown) =>
+    req<{ ok: true }>('/auth/passkeys/register/verify', {
+      method: 'POST',
+      body: JSON.stringify({ ceremonyId, response }),
+    }),
+  deletePasskey: (id: string, currentPassword: string) =>
+    req<{ ok: true }>(`/auth/passkeys/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ currentPassword }),
+    }),
 
   // files
   tree: () => req<TreeNode>('/api/files/'),
@@ -117,9 +209,9 @@ export const api = {
     req<{ ok: true }>('/api/files/rename', { method: 'PATCH', body: JSON.stringify({ from, to }) }),
   copy: (from: string, to: string) =>
     req<{ ok: true }>('/api/files/copy', { method: 'POST', body: JSON.stringify({ from, to }) }),
-  remove: (path: string) =>
+  remove: (path: string, mode?: 'trash' | 'permanent') =>
     req<{ ok: true; trashed?: string; deleted?: string }>(
-      `/api/files/?path=${encodeURIComponent(path)}`,
+      `/api/files/?path=${encodeURIComponent(path)}${mode ? `&mode=${mode}` : ''}`,
       { method: 'DELETE' },
     ),
   // trash (FR-1)
@@ -141,6 +233,18 @@ export const api = {
     if (!res.ok) throw new ApiError((await res.json().catch(() => ({}))).error ?? 'Upload failed', res.status);
     return res.json() as Promise<{ ok: true; path: string; size: number }>;
   },
+  readBinary: async (path: string) => {
+    const res = await fetch(`/api/files/content?path=${encodeURIComponent(path)}`, { credentials: 'include' });
+    if (!res.ok) throw new ApiError(res.statusText || 'Unable to read binary file', res.status);
+    return res.arrayBuffer();
+  },
+  writeBinary: async (path: string, data: ArrayBuffer) => {
+    const normalized = path.replaceAll('\\', '/');
+    const slash = normalized.lastIndexOf('/');
+    const dir = slash >= 0 ? normalized.slice(0, slash) : '';
+    const name = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+    return api.upload(new File([data], name), dir);
+  },
   rawUrl: (path: string) => `/api/files/content?path=${encodeURIComponent(path)}`,
 
   // search & links
@@ -157,6 +261,17 @@ export const api = {
       body: JSON.stringify({ query, paths, matchCase, phrase }),
     }),
   tags: () => req<{ tags: { tag: string; count: number }[] }>('/api/tags'),
+  // Obsidian metadata cache: whole vault, or one note when `path` is given.
+  metaCache: () =>
+    req<{
+      caches: Record<string, ObsidianFileCache>;
+      resolvedLinks: Record<string, Record<string, number>>;
+      unresolvedLinks: Record<string, Record<string, number>>;
+    }>('/api/metacache'),
+  metaCacheFor: (path: string) =>
+    req<{ path: string; cache: ObsidianFileCache | null }>(
+      `/api/metacache?path=${encodeURIComponent(path)}`,
+    ),
   properties: () =>
     req<{ properties: { key: string; type: string; count: number }[] }>('/api/properties'),
   propertyTypes: () => req<{ types: Record<string, string> }>('/api/property-types'),
@@ -176,12 +291,14 @@ export const api = {
     }>('/api/graph'),
   reindex: () => req<{ ok: true }>('/api/reindex', { method: 'POST' }),
 
-  // ui state (workspace persistence, shared across browsers)
-  getUiState: () => req<any>('/api/uistate/'),
-  putUiState: (state: any, clientId: string) =>
+  // UI state is namespaced per browser/app installation, never per vault.
+  getUiState: (workspaceId: string) => req<any>('/api/uistate/', {
+    headers: { 'X-Workspace-Id': workspaceId },
+  }),
+  putUiState: (state: any, clientId: string, workspaceId: string) =>
     req<{ ok: true }>('/api/uistate/', {
       method: 'PUT',
-      headers: { 'X-Client-Id': clientId },
+      headers: { 'X-Client-Id': clientId, 'X-Workspace-Id': workspaceId },
       body: JSON.stringify(state),
     }),
 
@@ -229,8 +346,21 @@ export const api = {
 
   // plugins
   listPlugins: () => req<{ plugins: any[] }>('/api/plugins/'),
+  // Public discovery is loaded directly from Obsidian/GitHub. Keeping it out
+  // of /api/plugins avoids 404s from self-hosted reverse-proxy route filters.
+  listCommunityPlugins: fetchCommunityPluginCatalog,
+  getCommunityPluginReadme: fetchCommunityPluginReadme,
   installPlugin: (repo: string) =>
     req<{ plugin: any }>('/api/plugins/install', { method: 'POST', body: JSON.stringify({ repo }) }),
   setPluginEnabled: (id: string, enabled: boolean) =>
-    req<{ ok: true }>(`/api/plugins/${id}/enabled`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+    req<{ ok: true; reloadRequired: boolean }>(`/api/plugins/${id}/enabled`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  uninstallPlugin: (id: string) =>
+    req<{ ok: true; reloadRequired: boolean }>(`/api/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  getPluginData: (id: string) =>
+    req<{ data: unknown }>(`/api/plugins/${encodeURIComponent(id)}/data`),
+  putPluginData: (id: string, data: unknown) =>
+    req<{ ok: true }>(`/api/plugins/${encodeURIComponent(id)}/data`, {
+      method: 'PUT',
+      body: JSON.stringify({ data }),
+    }),
 };

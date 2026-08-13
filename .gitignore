@@ -7,13 +7,27 @@ data/
 .env.local
 .DS_Store
 web/dist/
+web/public/excalidraw-assets/
 server/dist/
 server/public/
 coverage/
 *.tsbuildinfo
-# Desktop (Electron) build artifacts
+# Legacy local Electron/Capacitor artifacts (not part of the native build).
 desktop/.gen/
 desktop/release/
+mobile/android/
+mobile/www/build/
+# Compose Multiplatform native client artifacts.
+native-client/.gradle/
+native-client/**/build/
+.gradle/
+local.properties
 # Local agent runbooks/skills — may contain server creds; never commit.
 .claude/skills/
 report.md
+IMPLEMENTATION_PLAN.md
+# User's vault — separate git repo; never commit as submodule.
+vault/
+# Debug screenshots.
+.wo-*.png
+sample-vault/Daily/

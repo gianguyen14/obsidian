@@ -6,11 +6,17 @@ services:
     restart: unless-stopped
     ports:
       # ${HTTP_PORT:-8787} on the host → 8787 in the container.
-      # Set HTTP_BIND=127.0.0.1 in .env to expose only to localhost (reverse proxy).
-      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8787}:8787"
+      # Localhost-only by default. Set HTTP_BIND explicitly only when protected
+      # by a firewall/TLS reverse proxy and after completing password setup.
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8787}:8787"
     environment:
-      # Set an initial password (otherwise set it on first-run in the UI)
-      WEBOBSIDIAN_PASSWORD: ${WEBOBSIDIAN_PASSWORD:-}
+      # Required for production startup; generate a strong value in .env.
+      WEBOBSIDIAN_PASSWORD: ${WEBOBSIDIAN_PASSWORD:?Set WEBOBSIDIAN_PASSWORD in .env}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      PASSKEY_ORIGIN: ${PASSKEY_ORIGIN:-}
+      PASSKEY_RP_ID: ${PASSKEY_RP_ID:-}
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-67108864}
+      UPLOAD_MAX_CONCURRENT: ${UPLOAD_MAX_CONCURRENT:-4}
       # File-watch mode: auto (native + polling fallback) | polling. See .env.example.
       WEBOBSIDIAN_WATCH: ${WEBOBSIDIAN_WATCH:-auto}
       # Proxy trust. Default "true" (trust immediate hop) so X-Forwarded-Proto

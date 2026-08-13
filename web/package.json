@@ -4,12 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "assets:excalidraw": "node scripts/copy-excalidraw-assets.mjs",
+    "dev": "npm run assets:excalidraw && vite",
+    "build": "npm run assets:excalidraw && tsc -b && vite build",
     "preview": "vite preview",
+    "test": "vitest run",
+    "test:plugins": "vitest run src/lib/plugins.compat.test.ts src/lib/community-plugins.test.ts src/lib/theme.test.ts src/lib/bases.test.ts",
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.7.1",
     "@codemirror/lang-markdown": "^6.3.1",
     "@codemirror/language": "^6.10.6",
@@ -18,10 +22,18 @@
     "@codemirror/state": "^6.4.1",
     "@codemirror/theme-one-dark": "^6.1.2",
     "@codemirror/view": "^6.34.2",
+    "@excalidraw/excalidraw": "^0.18.1",
+    "@lezer/lr": "^1.4.10",
+    "@simplewebauthn/browser": "^13.3.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "d3-force": "^3.0.0",
     "katex": "^0.17.0",
-    "mermaid": "^11.15.0",
+    "mermaid": "^11.16.0",
+    "moment": "^2.30.1",
+    "pdfjs-dist": "^5.4.624",
     "pixi.js": "^8.19.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "rehype-raw": "^7.0.0",
@@ -32,15 +44,19 @@
     "remark-parse": "^11.0.0",
     "remark-rehype": "^11.1.1",
     "unified": "^11.0.5",
+    "yaml": "^2.9.0",
     "zustand": "^5.0.1"
   },
   "devDependencies": {
     "@types/d3-force": "^3.0.10",
     "@types/katex": "^0.16.8",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "happy-dom": "^20.11.1",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10"
   }
 }

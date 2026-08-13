@@ -10,37 +10,33 @@ export default defineConfig({
     chunkSizeWarningLimit: 900,
     rollupOptions: {
       output: {
-        manualChunks: {
-          codemirror: [
-            '@codemirror/state',
-            '@codemirror/view',
-            '@codemirror/commands',
-            '@codemirror/language',
-            '@codemirror/lang-markdown',
-            '@codemirror/theme-one-dark',
-          ],
-          markdown: [
-            'unified',
-            'remark-parse',
-            'remark-gfm',
-            'remark-rehype',
-            'rehype-raw',
-            'rehype-sanitize',
-            'rehype-stringify',
-          ],
-          react: ['react', 'react-dom'],
+        manualChunks(id) {
+          const moduleId = id.replaceAll('\\', '/');
+          if (moduleId.includes('/node_modules/@codemirror/')) return 'codemirror';
+          if (
+            /\/node_modules\/(unified|remark-[^/]+|rehype-[^/]+)\//.test(moduleId)
+          ) return 'markdown';
+          if (/\/node_modules\/(react|react-dom)\//.test(moduleId)) return 'react';
+          return undefined;
         },
       },
     },
   },
   server: {
-    port: 5173,
-    proxy: {
+    port: 5173,    proxy: {
       '/api': 'http://localhost:8787',
       '/auth': 'http://localhost:8787',
       '/public': 'http://localhost:8787',
       '/share': 'http://localhost:8787', // SSR share page is server-rendered even in dev
       '/ws': { target: 'ws://localhost:8787', ws: true },
     },
+  },
+  test: {
+    // Only this workspace: server/ and desktop/ use node --test, and their
+    // files would otherwise be collected when vitest runs from the repo root.
+    root: import.meta.dirname,
+    include: ['src/**/*.test.{ts,tsx}'],
+    // happy-dom here has no localStorage; setup.ts polyfills it.
+    setupFiles: ['./test/setup.ts'],
   },
 });

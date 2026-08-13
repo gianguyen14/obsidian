@@ -1,5 +1,15 @@
 # Changelog
 
+- Community Plugins Browse now fetches Obsidian's catalog/statistics and each
+  repository README directly from GitHub, eliminating reverse-proxy API 404s.
+- Community Plugins now uses a dedicated catalog API that cannot be confused
+  with installed plugins, tolerates temporary stats failures, and renders each
+  plugin repository's sanitized GitHub `README.md` in the detail view.
+- Community Plugins Browse now merges Obsidian's complete official catalog with
+  official download statistics, ranks plugins by popularity, and provides
+  sorting, download/update metadata, incremental rendering and detail views.
+- Fixed Community Plugins Browse returning a proxy-level `404 Not Found` by loading the catalog through the established plugins collection endpoint, with retry UI and route regression coverage.
+
 All notable changes to WebObsidian are documented here. This project tracks its product
 design and version history in [PRD.md](PRD.md); the entries below summarize user-facing
 changes. The format is loosely based on [Keep a Changelog](https://keepachangelog.com).
@@ -7,6 +17,11 @@ changes. The format is loosely based on [Keep a Changelog](https://keepachangelo
 ## [Unreleased]
 
 ### Added
+- Obsidian-style Community plugins manager with grouped settings, installed-plugin
+  actions, official catalog browsing/search, one-click install and safe uninstall.
+- Browser-compatible Obsidian community-plugin runtime: commands/hotkeys, ribbon and
+  status items, custom views/extensions, plugin settings, Markdown processors, vault
+  APIs/events, plugin `data.json`, nested assets and load diagnostics.
 - Open-source repository scaffolding: `README.md` (with logo), `LICENSE` (MIT),
   `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, GitHub issue/PR templates and a
   CI workflow (typecheck, build, Docker image).
@@ -14,6 +29,13 @@ changes. The format is loosely based on [Keep a Changelog](https://keepachangelo
   `POST /api/files/copy` for recursive copy). *(PRD 0.9)*
 
 ### Changed
+- Added the Obsidian 1.13 confirmation-dialog, legacy CodeMirror registration, CLI-handler
+  and global DOM-helper contracts so Templater 2.24.3 can load and render its settings.
+- Replaced the production-incompatible `new Function` plugin loader with a same-origin
+  CommonJS-to-ESM wrapper. Workspace CSP permits dynamic JavaScript/WebAssembly only
+  while trusted community plugins are enabled; public shares remain strict.
+- Plugin settings now isolate render failures and support the DOM/component contracts
+  used by published Tasks and Calendar settings tabs instead of showing a blank page.
 - ⋯ **More options** menu rebuilt for parity with Obsidian Desktop: backlinks-in-document,
   open linked view, open in new window, add file property, in-note Find, export to PDF,
   reveal file in navigation, and per-file version history. *(PRD 0.8)*

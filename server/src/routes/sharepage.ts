@@ -12,6 +12,7 @@ import { getActiveShare } from '../services/shares.js';
 import { isUnlocked } from './shares.js';
 import { renderNoteHtml, metaDescription, firstImage, escapeHtml } from '../services/renderhtml.js';
 import { renderCanvasHtml, canvasDescription, canvasFirstImage, canvasViewerScript } from '../services/rendercanvas.js';
+import { config } from '../config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,8 +33,10 @@ async function appCss(): Promise<string> {
   }
 }
 
-function baseUrl(req: Request): string {
-  return `${req.protocol}://${req.get('host')}`;
+function baseUrl(_req: Request): string {
+  // Without an explicitly trusted deployment URL, emit relative metadata URLs
+  // instead of reflecting the attacker-controlled Host header.
+  return config.publicBaseUrl ?? '';
 }
 
 function page(opts: {

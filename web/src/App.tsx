@@ -1,8 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { api, ApiError } from './lib/api';
-import { useStore } from './lib/store';
+import { useStore, WORKSPACE_ID } from './lib/store';
 import Login from './components/Login';
-import ForceChangePassword from './components/ForceChangePassword';
 import Ribbon from './components/Ribbon';
 import Sidebar from './components/Sidebar';
 import RightSidebar from './components/RightSidebar';
@@ -14,14 +13,20 @@ import VersionHistory from './components/VersionHistory';
 import TrashView from './components/TrashView';
 import ContextMenu from './components/ContextMenu';
 import FolderPicker from './components/FolderPicker';
-import { loadPlugins } from './lib/plugins';
+import { handlePluginFilesystemEvent, handlePluginHotkey, loadPlugins } from './lib/plugins';
 import { initUrlSync } from './lib/urlsync';
 import { useIsMobile } from './lib/useIsMobile';
+import {
+  applyThemeToDocument,
+  normalizeTheme,
+  oppositeTheme,
+  themeClass,
+  type ThemeSetting,
+} from './lib/theme';
 
 export default function App() {
   const authed = useStore((s) => s.authed);
   const setAuthed = useStore((s) => s.setAuthed);
-  const mustChangePassword = useStore((s) => s.mustChangePassword);
   const setMustChangePassword = useStore((s) => s.setMustChangePassword);
   const loadTree = useStore((s) => s.loadTree);
   const leftOpen = useStore((s) => s.leftOpen);
@@ -34,7 +39,11 @@ export default function App() {
   const save = useStore((s) => s.save);
   const toast = useStore((s) => s.toast);
   const [checking, setChecking] = useState(true);
-  const [theme, setTheme] = useState<'theme-dark' | 'theme-light'>('theme-light');
+  const [theme, setTheme] = useState<ThemeSetting>('obsidian-light');
+
+  useLayoutEffect(() => {
+    applyThemeToDocument(theme);
+  }, [theme]);
 
   useEffect(() => {
     api
@@ -51,7 +60,7 @@ export default function App() {
 
   useEffect(() => {
     if (!authed) return;
-    loadTree();
+    void loadTree().then(() => loadPlugins()).catch(() => {});
     // Deep link (/note/<path>) wins over the restored workspace's active note.
     const deepLink = initUrlSync();
     useStore
@@ -65,10 +74,9 @@ export default function App() {
       .catch(() => {});
     api
       .getSettings()
-      .then((s) => setTheme(s?.ui?.theme === 'obsidian-dark' ? 'theme-dark' : 'theme-light'))
+      .then((s) => setTheme(normalizeTheme(s?.ui?.theme)))
       .catch(() => {});
     useStore.getState().loadShares(); // badge shared notes in the file tree
-    loadPlugins().catch(() => {});
     // websocket live updates
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -77,11 +85,12 @@ export default function App() {
       try {
         const msg = JSON.parse(ev.data);
         if (msg.type === 'fs') {
+          handlePluginFilesystemEvent(String(msg.event ?? 'change'), String(msg.path ?? ''));
           // coalesce bursts of fs events into a single tree refresh
           window.clearTimeout(treeTimer);
           treeTimer = window.setTimeout(() => loadTree(), 800);
-        } else if (msg.type === 'uistate') {
-          // another tab/device changed the workspace → sync live
+        } else if (msg.type === 'uistate' && msg.workspaceId === WORKSPACE_ID) {
+          // Only another tab in this browser/app profile may sync workspace UI.
           useStore.getState().applyRemoteState(msg.state, msg.originId);
         }
       } catch {
@@ -96,6 +105,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (handlePluginHotkey(e)) return;
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
       const k = e.key.toLowerCase();
@@ -152,11 +162,23 @@ export default function App() {
     };
   }, [isMobile, setMobileDrawer]);
 
-  if (checking) return <div className={theme} style={{ height: '100%' }} />;
-  if (!authed) return <div className={theme}><Login onAuthed={() => setAuthed(true)} /></div>;
-  // Signed in but still on the default password → block the app until it's changed.
-  if (mustChangePassword) return <div className={theme}><ForceChangePassword /></div>;
+  const changeTheme = async (nextTheme: ThemeSetting) => {
+    const previousTheme = theme;
+    setTheme(nextTheme);
+    try {
+      const updated = await api.putSettings({ ui: { theme: nextTheme } });
+      setTheme(normalizeTheme(updated?.ui?.theme));
+    } catch (error) {
+      setTheme(previousTheme);
+      console.error('Failed to save theme', error);
+      useStore.getState().notify('Could not save theme');
+    }
+  };
 
+  const activeThemeClass = themeClass(theme);
+
+  if (checking) return <div className={activeThemeClass} style={{ height: '100%' }} />;
+  if (!authed) return <div className={activeThemeClass}><Login onAuthed={() => setAuthed(true)} /></div>;
   // On mobile the sidebars are overlay drawers (always mounted, slid in/out by
   // CSS), driven by the device-local `mobileDrawer` state — not the persisted
   // leftOpen/rightOpen that sync across desktops.
@@ -172,9 +194,9 @@ export default function App() {
   ].filter(Boolean).join(' ');
 
   return (
-    <div className={theme}>
+    <div className={activeThemeClass}>
       <div className={appCls}>
-        <Ribbon onTheme={() => setTheme((t) => (t === 'theme-dark' ? 'theme-light' : 'theme-dark'))} />
+        <Ribbon onTheme={() => void changeTheme(oppositeTheme(theme))} />
         {showLeft && <Sidebar />}
         <Workspace />
         {showRight && <RightSidebar />}
@@ -183,7 +205,7 @@ export default function App() {
         )}
       </div>
       <CommandPalette />
-      <Settings />
+      <Settings theme={theme} onThemeChange={changeTheme} />
       <ShareDialog />
       <VersionHistory />
       <TrashView />

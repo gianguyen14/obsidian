@@ -5,6 +5,7 @@ import SearchPanel from './SearchPanel';
 import TagsPanel from './TagsPanel';
 import BookmarksPanel from './BookmarksPanel';
 import Icon from './Icon';
+import PluginViewHost from './PluginViewHost';
 
 const TITLES: Record<string, string> = {
   files: 'Files',
@@ -15,8 +16,10 @@ const TITLES: Record<string, string> = {
 
 export default function Sidebar() {
   const leftPanel = useStore((s) => s.leftPanel);
+  const pluginLeftPath = useStore((s) => s.pluginLeftPath);
   const newNote = useStore((s) => s.newNote);
   const newCanvas = useStore((s) => s.newCanvas);
+  const newDrawing = useStore((s) => s.newDrawing);
   const newFolder = useStore((s) => s.newFolder);
   const setSettings = useStore((s) => s.setSettings);
   const setTrash = useStore((s) => s.setTrash);
@@ -85,6 +88,17 @@ export default function Sidebar() {
     });
   };
 
+  if (pluginLeftPath) {
+    return (
+      <div className="sidebar plugin-sidebar">
+        <div className="plugin-sidebar-body">
+          <PluginViewHost path={pluginLeftPath} />
+        </div>
+        <div className="sidebar-resizer" title="Drag to resize" onPointerDown={onResizeDown} />
+      </div>
+    );
+  }
+
   return (
     <div className="sidebar">
       <div className="nav-header">
@@ -93,6 +107,9 @@ export default function Sidebar() {
           <>
             <button className="nav-action" title="New note" onClick={() => newNote()}>
               <Icon name="square-pen" size={16} />
+            </button>
+            <button className="nav-action" title="New drawing" onClick={() => newDrawing()}>
+              <Icon name="pencil" size={16} />
             </button>
             <button className="nav-action" title="New canvas" onClick={() => newCanvas()}>
               <Icon name="layout-dashboard" size={16} />

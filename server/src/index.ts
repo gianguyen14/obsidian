@@ -14,14 +14,14 @@ import { config } from './config.js';
 import { loadSettings, getSettings, setPasswordIfInitial } from './bootstrap.js';
 import { errorHandler } from './middleware/error.js';
 import { COOKIE_NAME } from './middleware/auth.js';
-import { verifyToken } from './services/auth.js';
+import { isPasswordSet, verifyToken } from './services/auth.js';
 import { authRouter } from './routes/auth.js';
 import { filesRouter } from './routes/files.js';
 import { searchRouter } from './routes/search.js';
 import { settingsRouter } from './routes/settings.js';
 import { gitRouter } from './routes/git.js';
 import { keysRouter } from './routes/keys.js';
-import { pluginsRouter } from './routes/plugins.js';
+import { communityPluginsRouter, pluginsRouter } from './routes/plugins.js';
 import { agentRouter } from './routes/agent.js';
 import { uiStateRouter } from './routes/uistate.js';
 import { sharesRouter, publicSharesRouter } from './routes/shares.js';
@@ -29,24 +29,34 @@ import { sharePageRouter } from './routes/sharepage.js';
 import { initSearch, qmd } from './services/search.js';
 import { buildLinkGraph, updateLinkGraphForFile } from './services/links.js';
 import { buildFileIndex, indexFile, unindexFile } from './services/fileindex.js';
+import { buildMetaCache, removeMetaCache, upsertMetaCache } from './services/metacache.js';
 import { setBroadcaster, broadcast } from './services/realtime.js';
 import { getVaultRoot, ensureVault, invalidateStat } from './services/vault.js';
 import { startAutoSync } from './services/autosync.js';
+import { assertVaultPathAllowed } from './services/pathpolicy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Keep the local server alive on stray async errors (e.g. a deferred library task
-// throwing) instead of crashing the whole process — log loudly so bugs aren't hidden.
 process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err);
+  process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason);
+  process.exit(1);
 });
 
 async function main() {
   await loadSettings();
+  const settings = await getSettings();
+  await assertVaultPathAllowed(settings.vault.path, settings.vault.path);
   await setPasswordIfInitial();
+  if (config.isProd && !isLoopbackHost(config.host) && !(await isPasswordSet())) {
+    throw new Error(
+      'Refusing to expose an unconfigured production instance. Set WEBOBSIDIAN_PASSWORD ' +
+      'or bind HOST to 127.0.0.1 and complete first-run setup locally.',
+    );
+  }
   await ensureVault();
 
   const app = express();
@@ -65,35 +75,22 @@ async function main() {
     res.locals.cspNonce = randomBytes(16).toString('base64');
     next();
   });
-  // Security headers. The CSP intentionally does NOT emit `upgrade-insecure-requests`
-  // (it would break plain-HTTP self-hosting). `script-src` is 'self' + per-request
-  // nonce; `style-src` allows inline styles (React inline styles + the SSR page's
-  // <style>). Note: inline <script> inside ```html render-blocks won't execute under
-  // this policy — acceptable for the marginal XSS hardening it buys.
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        useDefaults: true,
-        directives: {
-          defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", (_req, res) => `'nonce-${(res as Response).locals.cspNonce}'`],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-          fontSrc: ["'self'", 'data:'],
-          connectSrc: ["'self'", 'ws:', 'wss:'],
-          objectSrc: ["'none'"],
-          frameSrc: ["'self'", 'blob:'],
-          baseUri: ["'self'"],
-          formAction: ["'self'"],
-          frameAncestors: ["'none'"],
-          upgradeInsecureRequests: null,
-        },
-      },
-      // Allow social crawlers / other sites to load public share og:images.
-      crossOriginEmbedderPolicy: false,
-      crossOriginResourcePolicy: { policy: 'cross-origin' },
-    }),
-  );
+  // The loader itself is CSP-safe, but some otherwise browser-compatible
+  // community plugins compile WebAssembly or unpack bundled dependencies with
+  // `new Function`/`eval` (Breadcrumbs and Excalidraw are current examples).
+  // Enable those capabilities only while community-plugin mode is active. The
+  // unauthenticated public-share surface always keeps the strict policy.
+  const strictSecurityHeaders = createSecurityHeaders(false);
+  const pluginSecurityHeaders = createSecurityHeaders(true);
+  app.use((req, res, next) => {
+    const publicShare = req.path === '/share' || req.path.startsWith('/share/') || req.path.startsWith('/public/shares/');
+    void getSettings()
+      .then((current) => {
+        const pluginMode = current.plugins.enabled.length > 0 && !publicShare;
+        (pluginMode ? pluginSecurityHeaders : strictSecurityHeaders)(req, res, next);
+      })
+      .catch(next);
+  });
 
   if (!config.isProd) {
     app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
@@ -111,6 +108,7 @@ async function main() {
   app.use('/api/settings', settingsRouter);
   app.use('/api/git', gitRouter);
   app.use('/api/keys', keysRouter);
+  app.use('/api/community-plugins', communityPluginsRouter);
   app.use('/api/plugins', pluginsRouter);
   app.use('/api/uistate', uiStateRouter);
   app.use('/api/shares', sharesRouter); // manage public share links (auth)
@@ -135,6 +133,7 @@ async function main() {
   await initSearch();
   await buildLinkGraph();
   await buildFileIndex();
+  await buildMetaCache();
   console.log('[boot] index ready');
 
   const server = http.createServer(app);
@@ -147,6 +146,49 @@ async function main() {
     console.log(`  Vault: ${config.defaultVaultPath}`);
     console.log(`  Data:  ${config.dataDir}\n`);
   });
+}
+
+/**
+ * Security headers shared by the strict app and community-plugin modes.
+ * `unsafe-eval` does not allow inline script tags; it only permits dynamic code
+ * generation required by trusted Obsidian plugin bundles. Public shares never
+ * receive this relaxed variant.
+ */
+function createSecurityHeaders(allowPluginCodeGeneration: boolean) {
+  return helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: [
+          "'self'",
+          (_req, res) => `'nonce-${(res as Response).locals.cspNonce}'`,
+          ...(allowPluginCodeGeneration ? ["'unsafe-eval'", "'wasm-unsafe-eval'"] : []),
+        ],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+        fontSrc: ["'self'", 'data:'],
+        // Browse loads the official Obsidian catalog, download statistics and
+        // plugin README files directly from GitHub so restrictive reverse
+        // proxies cannot turn discovery requests into /api 404 responses.
+        connectSrc: ["'self'", 'ws:', 'wss:', 'https://raw.githubusercontent.com'],
+        objectSrc: ["'none'"],
+        frameSrc: ["'self'", 'blob:'],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+        // Would break plain-HTTP self-hosting.
+        upgradeInsecureRequests: null,
+      },
+    },
+    // Allow social crawlers / other sites to load public share og:images.
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  });
+}
+
+function isLoopbackHost(host: string): boolean {
+  return ['127.0.0.1', '::1', 'localhost'].includes(host.toLowerCase());
 }
 
 // --- WebSocket: broadcast filesystem & UI-state events to connected clients ----
@@ -217,7 +259,9 @@ function startWatcher(root: string, usePolling: boolean) {
     // Ignore VCS/dep/trash dirs AND `.obsidian` — the desktop Obsidian app
     // rewrites its workspace/state files constantly, which otherwise floods the
     // server with events (→ broadcasts → full tree refetches) and pins the CPU.
-    ignored: (p) => /(^|[/\\])(\.git|\.obsidian|node_modules|\.trash)([/\\]|$)/.test(p),
+    ignored: (p) =>
+      /(^|[/\\])(\.git|\.obsidian|node_modules|\.trash)([/\\]|$)/.test(p) ||
+      /(^|[/\\])\.webobsidian-tmp-[^/\\]+$/.test(p),
     ignoreInitial: true,
     persistent: true,
     usePolling,
@@ -260,9 +304,11 @@ function startWatcher(root: string, usePolling: boolean) {
       // when Obsidian touched files in the background.
       if (type === 'unlink') {
         qmd.remove(rel);
+        removeMetaCache(rel);
         await updateLinkGraphForFile(rel, true).catch(() => {});
       } else {
         await qmd.upsert(rel).catch(() => {});
+        await upsertMetaCache(rel).catch(() => {});
         await updateLinkGraphForFile(rel).catch(() => {});
       }
     }

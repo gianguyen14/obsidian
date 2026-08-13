@@ -24,7 +24,7 @@ and design-driven — please read the few rules below before opening a PR.
 
 ## Development setup
 
-Requires **Node ≥ 20** and `git` (+ `git-lfs` if you use LFS).
+Requires **Node ≥ 20.19** and `git` (+ `git-lfs` if you use LFS).
 
 ```bash
 npm install

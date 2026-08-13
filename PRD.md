@@ -1,7 +1,59 @@
 # PRD — WebObsidian
 
 > Product Requirements Document
-> Phiên bản: 1.5 · Cập nhật: 2026-06-22 · Trạng thái: Draft
+> Phiên bản: 2.1 · Cập nhật: 2026-08-12 · Trạng thái: Draft
+> Changelog 2.1 (workspace độc lập + desktop local-first): bỏ mô hình desktop trỏ thẳng vào hosted server.
+> Electron vẫn dùng nguyên React/CSS/runtime của web để giữ full parity, nhưng spawn Express service chỉ
+> bind `127.0.0.1` và dùng vault/data riêng trên máy. Web và desktop chỉ đồng bộ nội dung khi người dùng
+> cấu hình cùng Git remote. UI state được namespace bằng `workspaceId` riêng mỗi browser/app profile;
+> WebSocket không còn làm note/tab/sidebar của nền tảng này điều khiển nền tảng khác.
+> Changelog 2.0 (desktop quay lại Electron để parity web): bản Compose Desktop 1.9 thiếu phần lớn tính năng
+> đã có trên web và giao diện không tương đồng. Desktop nay dùng Electron remote client tải nguyên SPA từ
+> origin server, nhờ đó editor/live preview, Graph, Canvas, Excalidraw, Bases, settings, media, Passkey,
+> WebSocket và community plugin compatibility dùng đúng implementation web hiện hữu. Compose Multiplatform
+> không còn là đường build desktop; phần Android native vẫn tách riêng vì Electron không hỗ trợ mobile.
+> Changelog 1.9 (desktop/mobile native, **không WebView**): thay Electron `BrowserWindow` và Capacitor
+> `server.url` bằng một client Compose Multiplatform dùng chung cho desktop + Android. UI được Compose/Skia
+> render trực tiếp, networking dùng Ktor (OkHttp trên Android, CIO trên desktop), gọi REST API với base URL
+> tường minh và cookie session do client quản lý. Không tải SPA/HTML, không nhúng Chromium, không có
+> Electron/Capacitor trong dependency/runtime phát hành. Bản native đầu tiên hỗ trợ cấu hình server,
+> password + TOTP, giữ session, cây vault, full-text search, mở/sửa/lưu text note và autosave; passkey,
+> plugin DOM, Canvas/Graph/Excalidraw native và offline được ghi rõ là phần parity tiếp theo.
+> Changelog 1.8 (FR-13 viết lại + FR-14 mới — App desktop & mobile dạng **remote client**, theo yêu cầu
+> người dùng): người dùng sẽ host WebObsidian và muốn app desktop + mobile
+> dùng **chung một vault trên server đó**. Kiến trúc FR-13 cũ (Electron **nhúng server** chạy `127.0.0.1`,
+> chọn vault cục bộ) mâu thuẫn trực tiếp với mục tiêu này: nó tạo ra **vault thứ hai** nằm trên máy người
+> dùng, không đồng bộ gì với server đã host. Vì vậy FR-13 được **viết lại thành remote client thuần**, và bổ
+> sung **FR-14** cho Android APK (Capacitor). **Ghi nhận mất năng lực có chủ đích:** bỏ hẳn chế độ chạy vault
+> cục bộ/offline — app nay **bắt buộc phải online** và luôn cần một server WebObsidian để trỏ tới.
+> Điểm kỹ thuật cốt lõi: cả hai app **load SPA thẳng từ origin của server**, nên document origin *chính là*
+> origin server. Nhờ đó **không phải sửa `web/src/lib/api.ts`**: mọi URL root-relative vẫn resolve đúng,
+> cookie `webobsidian_token` vẫn là first-party, `rawUrl()` nhét vào `<img>/<video>/<audio> src` vẫn chạy
+> (thứ mà Bearer header **không** giải quyết được), WebSocket vẫn gửi cookie khi upgrade, và **không phát
+> sinh request cross-origin nào** nên không phải nới CORS. Passkey vẫn hoạt động vì origin là https thật.
+> Hệ quả: base-URL + `Authorization: Bearer` + `?token=` cho WS + CORS allow-list **chỉ** cần khi nào bundle
+> asset SPA vào APK hoặc thêm offline cache — hoãn lại, và phải làm trọn gói chứ không nửa vời.
+> Changelog 1.7 (FR-8 — Uninstall plugin phải gỡ hẳn, theo báo lỗi người dùng): nhấn **Uninstall** trước đây
+> chỉ làm plugin bị *disable* mà vẫn còn cài. Nguyên nhân là client gọi **hai** request: `disablePlugin()`
+> trước rồi mới `DELETE`; khi request `DELETE` hỏng thì plugin đã bị disable nhưng vẫn nằm trong `installed`
+> và thư mục vẫn còn. Nay client chỉ gọi **một** request `DELETE /api/plugins/{id}` — server vốn đã xoá thư
+> mục và loại id khỏi cả `enabled` lẫn `installed` một cách atomic. Lỗi thất bại được báo rõ ra UI thay vì
+> nuốt (Express trả HTML 404 không có field `error`, trước đây hiện thành "Error: " rỗng). Ghi chú vận hành:
+> image Docker đang chạy được build **trước** commit thêm route `DELETE`, nên bản deploy thực tế không hề có
+> endpoint này; đồng thời `npm run build` đang fail do xung đột `@types/express` 4 vs 5 mà `@types/multer`
+> kéo vào, khiến image không thể rebuild. Đã pin bằng `overrides` ở package.json gốc.
+> Changelog 1.6 (FR-8 — Bases view do plugin đăng ký + metadata cache toàn vault, theo yêu cầu người dùng):
+> khi mở file `.base`, WebObsidian trước đây luôn render một danh sách phẳng tự viết nên các view do plugin
+> đăng ký (ví dụ `tasknotesCalendar`) không bao giờ hiển thị — khác hẳn Obsidian desktop. Bổ sung **Bases
+> runtime** thực thi đúng `filters`/`formulas`/`sort`/`groupBy` của file `.base` (có expression evaluator
+> riêng, không dùng regex) và **host view do plugin đăng ký**: gọi `factory(controller, containerEl)`, inject
+> `app`/`config`/`data`/`allProperties` lên view rồi gọi `onDataUpdated()` — đúng hợp đồng mà Bases thật dùng.
+> Danh sách phẳng chỉ còn là fallback cho view type không ai đăng ký (và khi renderer plugin lỗi).
+> Điều kiện tiên quyết: `metadataCache.getFileCache()` trước đây trả `null` cho mọi file trừ file đang mở,
+> `resolvedLinks`/`unresolvedLinks` không bao giờ được populate → plugin quét vault thấy rỗng mà **không có
+> lỗi nào**. Nay server dựng **metadata cache toàn vault** (`GET /api/search/metacache`) và web prime cache
+> trước khi load plugin. Kèm sửa `vault.trash()`: `delete()`/`trash()` từng dùng chung một request nên ngữ
+> nghĩa do `settings.vault.deleteMode` quyết định thay vì theo hợp đồng API; nay pin `mode` tường minh.
 > Changelog 1.5 (FR-13 — Desktop app Electron đa nền tảng, theo yêu cầu người dùng): bổ sung **FR-13** —
 > đóng gói WebObsidian thành **app cài đặt** macOS/Windows/Linux (arm64/x64/ia32). Workspace mới `desktop/`
 > là **Electron shell** spawn đúng server Express hiện có như tiến trình con (qua `ELECTRON_RUN_AS_NODE`,
@@ -103,7 +155,7 @@
 ### 1.2 Ngoài phạm vi (Non-goals — v1)
 - Realtime multi-user collaborative editing (CRDT). v1 là single-user (1 password).
 - Obsidian Sync/Publish độc quyền (thay bằng Git sync).
-- Mobile native app (chỉ responsive web).
+- iOS native app (Android có prototype Compose — xem FR-14; iOS ngoài phạm vi v1).
 - 100% tương thích mọi plugin dùng Electron/Node API nội bộ (chỉ hỗ trợ subset Obsidian API phổ biến).
 
 ### 1.3 Người dùng mục tiêu
@@ -133,32 +185,46 @@
 ### 2.1 Tech stack
 | Layer | Lựa chọn | Lý do |
 |-------|----------|-------|
-| Backend | Node 20+, Express, TypeScript | Đồng nhất ngôn ngữ, hệ sinh thái git/markdown phong phú |
-| Frontend | React + Vite + TypeScript | Build nhanh, SPA |
+| Backend | Node 22, Express, TypeScript | Đồng nhất ngôn ngữ, hệ sinh thái git/markdown phong phú |
+| Frontend | React 18 + Vite + TypeScript | Build nhanh, SPA |
 | Editor | CodeMirror 6 | Engine soạn thảo của chính Obsidian |
+| Graph | PixiJS (GPU) + d3-force | Render nhanh vault lớn |
+| Canvas/Draw | JSON Canvas + Excalidraw | Tương thích Obsidian, whiteboard tự do |
 | Markdown | unified/remark + rehype | Render an toàn, hỗ trợ plugin |
 | Search | QMD (module nội bộ trên nền MiniSearch) | Full-text + fielded, in-process, không cần service ngoài |
 | Sync | simple-git + git-lfs | Native git, hỗ trợ file lớn |
-| Auth | Mật khẩu hash (scrypt) + JWT cookie | Đơn giản, không cần DB |
+| Auth | Mật khẩu hash (scrypt) + JWT cookie + WebAuthn | Đơn giản, không cần DB; hỗ trợ 2FA + Passkeys |
+| State | Zustand | Global state management frontend |
 | Storage cfg | `data/settings.json` | Yêu cầu "JSON thuần" |
+| Desktop | Electron + electron-builder | Full web parity, local-first |
+| Mobile | Kotlin/Compose Multiplatform + Ktor | Native Android, không WebView |
 | Container | Docker + docker-compose | Deploy 1 lệnh |
 
 ### 2.2 Layout thư mục dự án
 ```
 webobsidian/
-├── server/           # API backend
+├── server/           # API backend (Express + TypeScript)
 │   └── src/
-│       ├── routes/       # auth, files, search, sync, api(agent), plugins
-│       ├── services/     # vault, search(QMD), git, settings, auth, plugins
-│       ├── middleware/   # auth guard, apikey guard, error handler
-│       └── plugins/      # Obsidian API shim + loader
-├── web/              # React SPA
+│       ├── routes/       # auth, files, search, sync, api(agent), plugins, shares
+│       ├── services/     # vault, search(QMD), git, settings, auth, plugins, passkeys
+│       ├── middleware/   # auth guard, apikey guard, ratelimit, error handler
+│       └── lib/          # utilities (redact, etc.)
+├── web/              # React SPA (Vite)
 │   └── src/
-│       ├── components/   # FileTree, Editor, Preview, SearchPanel, Settings…
-│       ├── lib/          # api client, store, markdown
-│       └── styles/
+│       ├── components/   # FileTree, Editor, Preview, GraphView, CanvasView,
+│       │                 # ExcalidrawView, SearchPanel, Settings, BasesPluginView…
+│       ├── lib/          # api client, store, markdown, plugins, livePreview,
+│       │                 # canvas, excalidraw, bases, community-plugins…
+│       └── styles/       # obsidian.css
+├── desktop/          # Electron desktop app (local-first, embeds server)
+│   └── src/
+├── native-client/    # Kotlin Multiplatform / Compose (Android prototype)
+│   └── composeApp/
+├── mobile/           # Convenience scripts for native Android builds
 ├── data/             # runtime: settings.json, apikeys, sessions (gitignored)
-├── docs/
+├── sample-vault/     # bundled demo vault for quick start
+├── docs/             # AGENT_API.md, PLUGIN_COMPATIBILITY.md, agent-skill
+├── assets/           # logo
 ├── docker-compose.yml
 └── Dockerfile
 ```
@@ -258,7 +324,27 @@ webobsidian/
 
 ### FR-8 · Community plugins
 - Đọc danh sách plugin từ `.obsidian/plugins/*` (manifest.json, main.js).
-- Plugin loader nạp `main.js` trong sandbox với **Obsidian API shim** (App, Vault, Workspace, Plugin, Notice, Setting…).
+- Plugin loader nạp `main.js` qua module wrapper cùng origin, tương thích
+  `require('obsidian')` và không tự dùng `eval`; khi có community plugin được bật,
+  workspace cho phép JavaScript/WebAssembly động vì một số bundle chính thức cần các
+  cơ chế này. Trang chia sẻ công khai luôn giữ CSP nghiêm ngặt. Plugin là mã tin cậy
+  giống mô hình community plugin của Obsidian, không phải security sandbox.
+- **Obsidian API compatibility runtime**: vault/workspace/events, command/hotkey,
+  ribbon/status, settings, custom view/extension, Markdown processor và `data.json`.
+- **Metadata cache toàn vault**: server parse frontmatter/headings/tags/links/embeds/listItems/sections
+  (kèm position thật) cho mọi file `.md` và phục vụ qua `GET /api/search/metacache`; watcher cập nhật
+  tăng dần. Web prime cache **trước khi** load plugin vì `onload()` của nhiều plugin quét vault ngay
+  bằng `getFileCache()` — cache rỗng ở thời điểm đó khiến plugin khởi động im lặng với 0 dữ liệu.
+  `resolvedLinks`/`unresolvedLinks` được dựng từ cùng nguồn này.
+- **Bases (`.base`)**: thực thi `filters`/`formulas`/`sort`/`groupBy` bằng expression evaluator riêng
+  (tokenizer + Pratt parser; hỗ trợ `file.hasTag/hasLink/hasProperty/asLink`, `isType`, list pipeline
+  `filter/map/reduce`, số học ngày tháng và format kiểu moment). View type do plugin đăng ký qua
+  `app.registerBasesView(id, …)` được host đúng hợp đồng của Bases: gọi `factory(controller, containerEl)`,
+  sau đó inject `app`/`config`/`data`/`allProperties` lên chính view instance rồi gọi `onDataUpdated()`
+  (view instance được giữ nguyên giữa các lần data thay đổi để không mất state). `groupedData` luôn có
+  ≥1 group; khi không group thì đúng một group với `hasKey() === false`. Danh sách phẳng dựng sẵn chỉ là
+  fallback cho view type chưa ai đăng ký, hoặc khi renderer của plugin ném lỗi (khi đó hiện cảnh báo).
+- Hiển thị riêng trạng thái installed/enabled/loaded/failed/incompatible cùng lỗi chẩn đoán.
 - Browse & cài plugin từ community list (qua GitHub releases) — tải về thư mục plugins.
 - Bật/tắt plugin; lưu trạng thái trong settings.
 
@@ -329,8 +415,8 @@ cùng một codebase React.
   trên thanh tab, **vuốt từ mép trái/phải** (edge-swipe), hoặc các nút toggle panel. Có **backdrop** mờ;
   chạm backdrop hoặc chọn note → drawer tự đóng. Drawer trái gồm strip ribbon (chuyển panel Files/Search/
   Graph/Bookmarks/Tags/Settings) + panel nội dung.
-- **Trạng thái drawer là cục bộ thiết bị** (không persist, không broadcast qua WebSocket) → mở/đóng drawer
-  trên điện thoại không ảnh hưởng trạng thái sidebar của desktop đang đồng bộ chung `uistate`.
+- **Trạng thái drawer là cục bộ thiết bị** (không persist, không broadcast qua WebSocket). Các phần workspace
+  khác cũng được namespace theo browser/app profile nên mobile/web/desktop không điều khiển UI của nhau.
 - **Touch targets**: hàng cây thư mục, nút công cụ, tab ≥ 44px; tăng padding chạm; bỏ hover-only affordance
   (nút close tab luôn hiện trên mobile).
 - **Format toolbar**: thanh công cụ định dạng khi soạn thảo (Live/Source): bold, italic, heading, list,
@@ -381,33 +467,48 @@ chúng bằng đường có mũi tên, dùng cho brainstorm, moodboard, sơ đ�
 - **Phạm vi v1 (non-goals)**: không có realtime collaborative cursor; không group auto-resize theo thành viên;
   không portal/embed canvas-trong-canvas; không liên kết backlink graph từ node file (giữ đơn giản).
 
-### FR-13 · Desktop app (Electron, multi-platform)
-Mục tiêu: đóng gói WebObsidian thành **app cài đặt trên máy** (macOS/Windows/Linux) để người dùng tải về dùng
-như app native, không cần tự dựng server hay Docker. Bản chất là một **Electron shell** bọc quanh đúng server
-Express + SPA hiện có (không fork code, không đổi kiến trúc) — nên mọi tính năng web đều chạy y hệt.
+### FR-13 · Desktop app Electron (full web parity, local-first)
+Mục tiêu: app cài đặt trên macOS/Windows/Linux có giao diện và tính năng **giống hệt bản web**, nhưng sở hữu
+workspace và vault riêng; không tự động dùng chung dữ liệu với hosted web.
 
-- **Kiến trúc**: Electron `main` **spawn server hiện có như tiến trình con** qua `ELECTRON_RUN_AS_NODE`
-  (dùng luôn Node nhúng trong Electron, không cần Node cài sẵn trên máy), bind **`127.0.0.1` + cổng trống
-  ngẫu nhiên** (localhost-only, không mở ra mạng), rồi `BrowserWindow` load `http://127.0.0.1:<port>`.
-  Server được **bundle thành 1 file `.mjs` duy nhất** bằng esbuild (toàn bộ deps inline; `fsevents` để
-  external vì optional). SPA build (`server/public`) đi kèm trong `resources/server/public`.
-- **Dữ liệu & vault**: lần chạy đầu hiện hộp thoại **chọn thư mục vault** (mặc định `~/Documents/WebObsidianVault`
-  nếu bỏ qua). `DATA_DIR` (settings.json, index) nằm trong thư mục `userData` per-user của Electron. Menu
-  **File → Switch Vault…** đổi vault (relaunch để re-index), **Open Vault/Data Folder**, **Open Logs**.
-- **Đăng nhập liền mạch**: app tự sinh **mật khẩu ngẫu nhiên/máy** lưu trong `userData`, truyền qua
-  `WEBOBSIDIAN_PASSWORD` (override) → **auto-login** (seed cookie JWT vào session của cửa sổ) và tự đặt
-  password tuỳ chỉnh để **không bắt đổi mật khẩu** lần đầu. Người dùng không phải gõ password; vẫn có thể
-  đổi trong Settings.
-- **Đa nền tảng / đa kiến trúc**: vì server **không có native module runtime**, cross-arch chỉ là đóng gói
-  Electron binary tương ứng. Đóng gói bằng **electron-builder**: macOS `dmg`+`zip` (arm64/x64), Windows
-  `nsis`(installer)+`portable` (x64/arm64/ia32), Linux `AppImage`+`deb` (x64/arm64).
-- **Phát hành**: GitHub Actions workflow `release.yml` chạy khi push tag `v*` — matrix macOS/Windows/Ubuntu,
-  mỗi runner build native cho HĐH của nó rồi **publish lên GitHub Release** (draft) để người dùng tải.
-- **Phụ thuộc ngoài**: tính năng Git sync cần `git` có trên máy (PATH được bổ sung các vị trí phổ biến); thiếu
-  git thì app vẫn chạy bình thường cho sửa note cục bộ, chỉ tắt sync. App **chưa code-sign/notarize** (sẽ có
-  cảnh báo Gatekeeper/SmartScreen — chấp nhận cho self-hosted free).
-- **Phạm vi (non-goals)**: chưa auto-update (người dùng tải bản mới thủ công); chưa ký số; không nhúng git
-  portable; không chạy nhiều cửa sổ/vault song song trong 1 instance (single-instance lock).
+- **Kiến trúc**: Electron spawn server Express đã bundle bằng chính runtime Node của Electron, bind cổng
+  ngẫu nhiên trên `127.0.0.1`, rồi `BrowserWindow` tải nguyên SPA từ origin loopback đó. UI không bị fork;
+  cookie, WebSocket, attachment/media và plugin vẫn same-origin.
+- **Parity**: desktop dùng chung 100% React/CSS/runtime của web — Live Preview, Reading, Graph, Canvas,
+  Excalidraw, Bases/TaskNotes, search, settings, Git, shares và community plugin shim.
+- **Cấu hình**: lần đầu chọn thư mục vault cục bộ; app data, auth secret, settings, index và UI state nằm
+  trong user-data riêng của Electron. Menu cho phép đổi/mở vault và xem log.
+- **Đồng bộ**: không có remote server URL. Chỉ Git Pull/Commit/Push/Sync với cùng remote do người dùng cấu
+  hình mới trao đổi file vault giữa web và desktop; workspace UI không nằm trong Git.
+- **Bảo mật**: `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`; navigation khóa theo
+  origin loopback của app, link ngoài mở system browser. Backend không listen ra LAN.
+- **Đóng gói**: electron-builder tạo macOS dmg/zip arm64+x64, Windows NSIS x64/arm64/ia32 + portable x64,
+  Linux AppImage/deb x64+arm64. CI chạy trên OS native và publish draft GitHub Release.
+- **Non-goals**: chưa auto-update, code-sign hoặc notarize. Electron chỉ dành cho desktop; không tuyên bố
+  hỗ trợ Android/iOS.
+
+### FR-14 · Mobile app native (Android Compose)
+Mục tiêu: APK Android cho cùng remote vault, chia sẻ model/state/UI với desktop và **không Capacitor/WebView**.
+
+- **Kiến trúc**: cùng module Compose Multiplatform; Android launcher chỉ là `ComponentActivity.setContent`.
+  HTTP dùng Ktor OkHttp. Manifest chỉ yêu cầu Internet (cộng permission nội bộ AndroidX tự sinh), không có
+  activity WebView, HTML asset hay JavaScript bridge.
+- **UI adaptive**: dưới 760dp hiển thị danh sách và editor thành hai màn hình native; touch target Material,
+  IME action cho connect/login/search/TOTP, editor full-screen và nút quay lại danh sách.
+- **Bảo mật**: production chặn cleartext trong manifest; session nằm trong private SharedPreferences của
+  sandbox ứng dụng, không ghi log. Mọi binary/media về sau phải tải bằng client đã xác thực rồi render native.
+- **Đóng gói**: Android SDK 36, minSdk 24, targetSdk 36; `assembleDebug` tạo APK sideload. Release signing,
+  iOS, offline và push notification vẫn ngoài phạm vi v1.
+
+### Ghi chú vận hành chung cho FR-13/FR-14 (mô hình một chủ sở hữu)
+- Mọi thiết bị dùng **chung một tài khoản owner**. Đăng nhập trên điện thoại **không** đá desktop ra.
+- Đổi password / thay đổi TOTP / xoá passkey làm **bump `sessionVersion`** → **đăng xuất TẤT CẢ thiết bị
+  cùng lúc**. Đây là hành vi có chủ đích của mô hình bảo mật, không phải lỗi.
+- **Rate limit đăng nhập dùng chung**: `/auth/login` giới hạn 10 lần/15 phút, key theo địa chỉ TCP socket —
+  sau reverse proxy thì đó là **proxy**, nên mọi thiết bị dùng chung một bucket. Vài lần gõ sai trên điện
+  thoại có thể khoá luôn desktop 15 phút. **Chấp nhận và ghi tài liệu** thay vì sửa: cookie 30 ngày nên
+  đăng nhập rất hiếm, còn "sửa" bằng cách key theo `X-Forwarded-For` sẽ **tái tạo đúng lỗ hổng F-03** mà
+  code đang cố phòng (header do client bịa được).
 
 ---
 
@@ -443,17 +544,22 @@ PUT    /api/files/*path      # ghi
 POST   /api/files/*path      # tạo / upload
 PATCH  /api/files            # rename/move
 POST   /api/files/copy       # copy đệ quy file/folder {from,to} (Paste sau Copy)
-DELETE /api/files/*path      # xoá → .trash hoặc xoá hẳn (theo vault.deleteMode)
+DELETE /api/files/*path      # xoá → .trash hoặc xoá hẳn (mặc định theo vault.deleteMode;
+                             #   ?mode=trash|permanent để pin ngữ nghĩa, dùng cho vault.trash()/delete())
 GET    /api/files/trash      # liệt kê file trong .trash
 POST   /api/files/trash/restore   # khôi phục {path} về vị trí gốc
 DELETE /api/files/trash/item # xoá vĩnh viễn 1 item trong trash
 DELETE /api/files/trash      # empty trash (xoá hẳn toàn bộ)
 GET    /api/search?q=...
+GET    /api/search/metacache  # metadata cache toàn vault (frontmatter/headings/tags/links/…)
+                              #   + resolvedLinks/unresolvedLinks; ?path= để lấy 1 file
 GET    /api/backlinks?path=...
 GET    /api/git/status | POST /api/git/{pull,commit,push,sync}
 GET/PUT /api/settings
 GET/POST/DELETE /api/keys     # quản lý API key
 GET    /api/plugins | POST /api/plugins/install | PATCH enable
+DELETE /api/plugins/{id}      # gỡ hẳn: xoá thư mục plugin + loại khỏi enabled VÀ installed
+                              #   (atomic — client không được disable trước rồi mới gọi)
 GET    /api/shares            # list share (quản lý)
 POST   /api/shares            # tạo share cho 1 note {path} → {id,...}
 PATCH  /api/shares/{id}       # enable/disable {enabled}

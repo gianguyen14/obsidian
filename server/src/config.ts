@@ -10,6 +10,13 @@ export interface RuntimeConfig {
   /** Roots the folder browser is allowed to traverse. */
   allowedRoots: string[];
   initialPassword?: string;
+  publicBaseUrl?: string;
+  /** Optional canonical WebAuthn origin, e.g. https://notes.example.com. */
+  passkeyOrigin?: string;
+  /** Optional WebAuthn relying-party domain, e.g. notes.example.com. */
+  passkeyRpId?: string;
+  uploadMaxBytes: number;
+  uploadMaxConcurrent: number;
   isProd: boolean;
   /**
    * Express `trust proxy` setting. Controls whether `X-Forwarded-*` headers are
@@ -61,9 +68,45 @@ export const config: RuntimeConfig = {
   defaultVaultPath: path.resolve(process.env.VAULT_PATH ?? './sample-vault'),
   allowedRoots: resolveRoots(),
   initialPassword: process.env.WEBOBSIDIAN_PASSWORD || undefined,
+  publicBaseUrl: validPublicBaseUrl(process.env.PUBLIC_BASE_URL),
+  passkeyOrigin:
+    validPasskeyOrigin(process.env.PASSKEY_ORIGIN) ??
+    validPasskeyOrigin(process.env.PUBLIC_BASE_URL),
+  passkeyRpId: validRpId(process.env.PASSKEY_RP_ID),
+  uploadMaxBytes: positiveInt(process.env.UPLOAD_MAX_BYTES, 64 * 1024 * 1024),
+  uploadMaxConcurrent: positiveInt(process.env.UPLOAD_MAX_CONCURRENT, 4),
   isProd: process.env.NODE_ENV === 'production',
   trustProxy: resolveTrustProxy(),
 };
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function validPublicBaseUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return undefined;
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return undefined;
+  }
+}
+
+function validPasskeyOrigin(raw: string | undefined): string | undefined {
+  const value = validPublicBaseUrl(raw);
+  return value ? new URL(value).origin : undefined;
+}
+
+function validRpId(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const value = raw.trim().toLowerCase();
+  return /^[a-z0-9.-]+$/.test(value) && !value.startsWith('.') && !value.endsWith('.')
+    ? value
+    : undefined;
+}
 
 export const SETTINGS_FILE = path.join(config.dataDir, 'settings.json');
 export const INDEX_FILE = path.join(config.dataDir, 'qmd-index.json');

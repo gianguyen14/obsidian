@@ -4,6 +4,7 @@ import { api, type NoteMatches } from '../lib/api';
 import { outline } from '../lib/markdown';
 import TagsPanel from './TagsPanel';
 import Icon from './Icon';
+import PluginViewHost from './PluginViewHost';
 
 const MD_RE = /\.(md|markdown)$/i;
 const name = (p: string) => p.split('/').pop()?.replace(MD_RE, '') ?? p;
@@ -236,7 +237,18 @@ function OutlinePanel() {
 
 export default function RightSidebar() {
   const rightPanel = useStore((s) => s.rightPanel);
+  const pluginRightPath = useStore((s) => s.pluginRightPath);
   const setRightPanel = useStore((s) => s.setRightPanel);
+
+  if (pluginRightPath) {
+    return (
+      <div className="right-sidebar plugin-sidebar">
+        <div className="plugin-sidebar-body">
+          <PluginViewHost path={pluginRightPath} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="right-sidebar">

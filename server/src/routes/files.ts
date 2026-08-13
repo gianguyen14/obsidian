@@ -1,22 +1,53 @@
-import { Router } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import multer from 'multer';
 import path from 'node:path';
+import { mkdir } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import * as vault from '../services/vault.js';
 import { getSettings } from '../services/settings.js';
 import { qmd } from '../services/search.js';
 import { updateLinkGraphForFile } from '../services/links.js';
+import { removeMetaCache, upsertMetaCache } from '../services/metacache.js';
 import { scheduleAutoCommitOnSave } from '../services/git.js';
 import { resolveFile } from '../services/fileindex.js';
 import { onFileRenamed } from '../services/shares.js';
 import { mimeFor } from '../services/mime.js';
 import { sendFileWithRange } from '../services/httpfile.js';
+import { config } from '../config.js';
 
 export const filesRouter = Router();
 filesRouter.use(requireAuth);
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 512 * 1024 * 1024 } });
+const uploadTmp = path.join(config.dataDir, 'uploads');
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      mkdir(uploadTmp, { recursive: true }, (error) => cb(error, uploadTmp));
+    },
+    filename: (_req, _file, cb) => cb(null, randomBytes(24).toString('hex')),
+  }),
+  limits: { fileSize: config.uploadMaxBytes, files: 1, fields: 1 },
+});
+
+let activeUploads = 0;
+function limitUploadConcurrency(_req: Request, res: Response, next: NextFunction) {
+  if (activeUploads >= config.uploadMaxConcurrent) {
+    res.status(429).json({ error: 'Too many uploads in progress' });
+    return;
+  }
+  activeUploads += 1;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    activeUploads -= 1;
+  };
+  res.once('finish', release);
+  res.once('close', release);
+  next();
+}
 
 const isMd = (p: string) => /\.(md|markdown)$/i.test(p);
 
@@ -24,8 +55,12 @@ const isMd = (p: string) => /\.(md|markdown)$/i.test(p);
 // Incremental: only the touched file(s) are reparsed, not the whole vault.
 function reindex(opts: { upsert?: string; added?: string; removed?: string } = {}) {
   if (opts.upsert) void qmd.upsert(opts.upsert).catch(() => {});
+  if (opts.upsert && isMd(opts.upsert)) void upsertMetaCache(opts.upsert).catch(() => {});
   if (opts.added && isMd(opts.added)) void updateLinkGraphForFile(opts.added).catch(() => {});
-  if (opts.removed && isMd(opts.removed)) void updateLinkGraphForFile(opts.removed, true).catch(() => {});
+  if (opts.removed && isMd(opts.removed)) {
+    removeMetaCache(opts.removed);
+    void updateLinkGraphForFile(opts.removed, true).catch(() => {});
+  }
   scheduleAutoCommitOnSave();
 }
 
@@ -89,6 +124,7 @@ filesRouter.post(
 
 filesRouter.post(
   '/upload',
+  limitUploadConcurrency,
   upload.single('file'),
   asyncHandler(async (req, res) => {
     const dir = String(req.body?.dir ?? '');
@@ -97,12 +133,20 @@ filesRouter.post(
       res.status(400).json({ error: 'file required' });
       return;
     }
-    // Reuse an existing folder that differs only in case (e.g. an Obsidian vault's
-    // "Attachments") instead of creating a duplicate "attachments". See vault.ts.
-    const resolvedDir = dir ? await vault.resolveDirCaseInsensitive(dir) : '';
-    const rel = path.posix.join(resolvedDir, file.originalname);
-    await vault.writeFileBuffer(rel, file.buffer);
-    res.json({ ok: true, path: rel, size: file.size });
+    try {
+      // Reuse an existing folder that differs only in case (e.g. an Obsidian vault's
+      // "Attachments") instead of creating a duplicate "attachments". See vault.ts.
+      const resolvedDir = dir ? await vault.resolveDirCaseInsensitive(dir) : '';
+      const safeName = path.posix.basename(file.originalname.replaceAll('\\', '/'));
+      if (!safeName || safeName === '.' || safeName === '..') {
+        throw Object.assign(new Error('invalid filename'), { status: 400 });
+      }
+      const rel = path.posix.join(resolvedDir, safeName);
+      await vault.writeFileFromPath(rel, file.path);
+      res.json({ ok: true, path: rel, size: file.size });
+    } finally {
+      await vault.removeTemporaryFile(file.path);
+    }
   }),
 );
 
@@ -198,9 +242,17 @@ filesRouter.delete(
       res.status(400).json({ error: 'path required' });
       return;
     }
+    // `mode` lets callers pin the semantics instead of inheriting the vault
+    // default: the Obsidian plugin API exposes vault.trash() and vault.delete()
+    // as two distinct operations, so the shim must be able to force either one.
+    const mode = String(req.query.mode ?? '');
+    if (mode && mode !== 'trash' && mode !== 'permanent') {
+      res.status(400).json({ error: 'mode must be "trash" or "permanent"' });
+      return;
+    }
     const s = await getSettings();
     qmd.remove(rel);
-    if (s.vault.deleteMode === 'permanent') {
+    if (mode ? mode === 'permanent' : s.vault.deleteMode === 'permanent') {
       await vault.remove(rel);
       reindex({ removed: rel });
       res.json({ ok: true, deleted: rel });

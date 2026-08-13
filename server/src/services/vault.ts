@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { getSettings } from './settings.js';
 
 export interface TreeNode {
@@ -39,7 +40,7 @@ async function fileStat(abs: string, rel: string): Promise<{ m: number; c: numbe
 }
 
 const TEXT_EXTS = new Set([
-  '.md', '.markdown', '.txt', '.json', '.csv', '.canvas', '.css', '.js', '.yml', '.yaml',
+  '.md', '.markdown', '.txt', '.json', '.csv', '.canvas', '.excalidraw', '.base', '.css', '.js', '.yml', '.yaml',
 ]);
 
 const IGNORED = new Set(['.git', 'node_modules']);
@@ -150,18 +151,59 @@ export async function readFileBuffer(rel: string): Promise<Buffer> {
   return fs.readFile(abs);
 }
 
+// Writes to different files can proceed in parallel, while overlapping saves of
+// the same note are applied in request order. Excalidraw emits frequent changes
+// and the same vault may also be open in several browser tabs.
+const textWriteQueues = new Map<string, Promise<void>>();
+
 export async function writeFileText(rel: string, content: string): Promise<void> {
   const abs = await resolveInVault(rel);
-  await fs.mkdir(path.dirname(abs), { recursive: true });
-  const tmp = `${abs}.tmp-${Date.now()}`;
-  await fs.writeFile(tmp, content, 'utf8');
-  await fs.rename(tmp, abs);
+  const previous = textWriteQueues.get(abs) ?? Promise.resolve();
+  const queued = previous.catch(() => undefined).then(async () => {
+    await fs.mkdir(path.dirname(abs), { recursive: true });
+    // Date.now() is not unique: two concurrent saves routinely land in the same
+    // millisecond and used to race on one temp file. A hidden random name also
+    // keeps the short-lived file out of the vault tree/watcher.
+    const tmp = path.join(
+      path.dirname(abs),
+      `.webobsidian-tmp-${process.pid}-${randomBytes(8).toString('hex')}`,
+    );
+    try {
+      await fs.writeFile(tmp, content, { encoding: 'utf8', flag: 'wx' });
+      await fs.rename(tmp, abs);
+    } finally {
+      await fs.rm(tmp, { force: true }).catch(() => {});
+    }
+  });
+  textWriteQueues.set(abs, queued);
+  try {
+    await queued;
+  } finally {
+    if (textWriteQueues.get(abs) === queued) textWriteQueues.delete(abs);
+  }
 }
 
 export async function writeFileBuffer(rel: string, buf: Buffer): Promise<void> {
   const abs = await resolveInVault(rel);
   await fs.mkdir(path.dirname(abs), { recursive: true });
   await fs.writeFile(abs, buf);
+}
+
+/** Atomically import a disk-backed upload without buffering it in the Node heap. */
+export async function writeFileFromPath(rel: string, source: string): Promise<void> {
+  const abs = await resolveInVault(rel);
+  await fs.mkdir(path.dirname(abs), { recursive: true });
+  const tmp = `${abs}.tmp-${randomBytes(8).toString('hex')}`;
+  try {
+    await fs.copyFile(source, tmp);
+    await fs.rename(tmp, abs);
+  } finally {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+  }
+}
+
+export async function removeTemporaryFile(source: string): Promise<void> {
+  await fs.rm(source, { force: true }).catch(() => {});
 }
 
 export async function createFolder(rel: string): Promise<void> {
@@ -252,8 +294,9 @@ export async function trash(rel: string): Promise<string> {
   const s = await getSettings();
   const root = await getVaultRoot();
   const absFrom = await resolveInVault(rel);
-  const trashRoot = path.join(root, s.vault.trash);
-  const dest = path.join(trashRoot, rel);
+  const trashRoot = await resolveInVault(s.vault.trash);
+  const sourceRel = toRel(root, absFrom);
+  const dest = await resolveInVault(path.posix.join(s.vault.trash.replaceAll('\\', '/'), sourceRel));
   await fs.mkdir(path.dirname(dest), { recursive: true });
   // avoid collision
   let finalDest = dest;
@@ -287,8 +330,7 @@ export interface TrashItem {
 
 async function getTrashRoot(): Promise<string> {
   const s = await getSettings();
-  const root = await getVaultRoot();
-  return path.join(root, s.vault.trash);
+  return resolveInVault(s.vault.trash);
 }
 
 /** Confirm `abs` lives inside the trash folder; return its trash-relative path. */

@@ -1,9 +1,25 @@
 import { create } from 'zustand';
 import { api, type TreeNode, type ShareRecord } from './api';
 import { findNode } from './tree';
+import { EMPTY_EXCALIDRAW } from './excalidraw';
 
-/** Per-tab id so we can ignore the echo of our own server-pushed state change. */
+/** Per-tab id so sibling tabs can ignore their own server echo. */
 export const CLIENT_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+/** Stable per browser/app profile. Different platforms must never share workspace UI. */
+export const WORKSPACE_ID = (() => {
+  const key = 'webobsidian:workspace-id';
+  try {
+    const existing = localStorage.getItem(key);
+    if (existing && /^[a-zA-Z0-9_-]{8,64}$/.test(existing)) return existing;
+    const created = globalThis.crypto?.randomUUID?.().replaceAll('-', '')
+      ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(key, created);
+    return created;
+  } catch {
+    return `session_${CLIENT_ID.replaceAll('-', '_')}`;
+  }
+})();
 
 export type ViewMode = 'live' | 'source' | 'reading';
 export type TreeSort =
@@ -143,6 +159,10 @@ interface AppState {
   setLeftPanel: (p: 'files' | 'search' | 'tags' | 'bookmarks') => void;
   rightPanel: 'backlinks' | 'outgoing' | 'tags' | 'outline';
   setRightPanel: (p: 'backlinks' | 'outgoing' | 'tags' | 'outline') => void;
+  /** Active community-plugin view docked in either sidebar. */
+  pluginLeftPath: string | null;
+  pluginRightPath: string | null;
+  showPluginSidebar: (side: 'left' | 'right', path: string | null) => void;
   /** Query pushed into the search panel (e.g. clicking a tag node in the graph). */
   searchQuery: string;
   searchFor: (q: string) => void;
@@ -201,21 +221,23 @@ interface AppState {
   newFolder: (dir?: string) => Promise<void>;
   /** Obsidian-style: create & open a fresh "Untitled.canvas" (empty JSON Canvas). `dir` = target folder. */
   newCanvas: (dir?: string) => Promise<void>;
+  /** Create & open a native Excalidraw drawing in the target folder. */
+  newDrawing: (dir?: string) => Promise<void>;
   /** Tree path currently being inline-renamed (null = none); FileTree shows an input for it. */
   renamingPath: string | null;
   setRenamingPath: (path: string | null) => void;
   openDailyNote: () => Promise<void>;
   /** Re-fetch content for the active/split tabs (after reload or remote sync). */
   hydrate: () => Promise<void>;
-  /** Load persisted workspace state from the server and apply it. */
+  /** Load this installation's persisted workspace state and apply it. */
   loadUiState: () => Promise<void>;
-  /** Apply a workspace state pushed from another tab/device. */
+  /** Apply a workspace state pushed from a sibling tab in this installation. */
   applyRemoteState: (state: any, originId: string) => Promise<void>;
 }
 
-const TEXT_RE = /\.(md|markdown|txt|json|csv|canvas|css|js|ya?ml)$/i;
+const TEXT_RE = /\.(md|markdown|txt|json|csv|canvas|excalidraw|base|css|js|ya?ml)$/i;
 
-// ---- server-side workspace persistence (shared across browsers/devices) ----
+// ---- server-side workspace persistence, isolated by WORKSPACE_ID ----
 const PERSIST_KEYS = [
   'tabs', 'activePath', 'viewMode', 'expanded', 'splitPath', 'splitDirection',
   'recent', 'bookmarks', 'leftPanel', 'rightPanel', 'leftOpen', 'rightOpen', 'graphSettings',
@@ -293,7 +315,7 @@ function scheduleSave(): void {
     const json = JSON.stringify(payload);
     if (json === lastSaved) return;
     lastSaved = json;
-    api.putUiState(payload, CLIENT_ID).catch(() => {});
+    api.putUiState(payload, CLIENT_ID, WORKSPACE_ID).catch(() => {});
   }, 500);
 }
 
@@ -390,11 +412,16 @@ export const useStore = create<AppState>()(
         })),
 
       leftPanel: 'files',
-      setLeftPanel: (p) => set({ leftPanel: p, leftOpen: true }),
+      setLeftPanel: (p) => set({ leftPanel: p, leftOpen: true, pluginLeftPath: null }),
       rightPanel: 'backlinks',
-      setRightPanel: (p) => set({ rightPanel: p, rightOpen: true }),
+      setRightPanel: (p) => set({ rightPanel: p, rightOpen: true, pluginRightPath: null }),
+      pluginLeftPath: null,
+      pluginRightPath: null,
+      showPluginSidebar: (side, path) => set(side === 'left'
+        ? { pluginLeftPath: path, leftOpen: path ? true : get().leftOpen }
+        : { pluginRightPath: path, rightOpen: path ? true : get().rightOpen }),
       searchQuery: '',
-      searchFor: (q) => set({ searchQuery: q, leftPanel: 'search', leftOpen: true }),
+      searchFor: (q) => set({ searchQuery: q, leftPanel: 'search', leftOpen: true, pluginLeftPath: null }),
       leftOpen: true,
       rightOpen: true,
       toggleLeft: () => set((s) => ({ leftOpen: !s.leftOpen })),
@@ -526,7 +553,14 @@ export const useStore = create<AppState>()(
         if (!activePath || !dirty) return;
         if (!TEXT_RE.test(activePath)) return;
         await api.write(activePath, content);
-        set({ dirty: false });
+        // Do not mark a newer edit as saved when an older request completes.
+        // This matters for Excalidraw, where the scene may change while the
+        // previous autosave is still in flight.
+        set((state) => (
+          state.activePath === activePath && state.content === content
+            ? { dirty: false }
+            : {}
+        ));
       },
 
       createNote: async (path, body) => {
@@ -555,6 +589,17 @@ export const useStore = create<AppState>()(
         for (let i = 1; taken.has(name.toLowerCase()); i++) name = `Untitled ${i}.canvas`;
         const path = base ? `${base}/${name}` : name;
         await get().createNote(path, '{\n\t"nodes":[],\n\t"edges":[]\n}');
+        if (base) get().revealInTree(path);
+      },
+
+      newDrawing: async (dir) => {
+        const base = (dir ?? '').replace(/\/+$/, '');
+        const folder = base ? findNode(get().tree, base) : get().tree;
+        const taken = new Set((folder?.children ?? []).map((c) => c.name.toLowerCase()));
+        let name = 'Untitled.excalidraw';
+        for (let i = 1; taken.has(name.toLowerCase()); i++) name = `Untitled ${i}.excalidraw`;
+        const path = base ? `${base}/${name}` : name;
+        await get().createNote(path, EMPTY_EXCALIDRAW);
         if (base) get().revealInTree(path);
       },
 
@@ -630,7 +675,7 @@ export const useStore = create<AppState>()(
 
       loadUiState: async () => {
         try {
-          const s = await api.getUiState();
+          const s = await api.getUiState(WORKSPACE_ID);
           suppressSave = true;
           applyPersisted(s, set);
           lastSaved = JSON.stringify(pickPersisted(get()));

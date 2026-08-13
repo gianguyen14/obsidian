@@ -11,7 +11,7 @@ CodeMirror editor, live preview, wikilinks, an interactive graph, full-text sear
 GitHub sync (incl. Git LFS), an API for AI agents, and community-plugin support.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![Node](https://img.shields.io/badge/node-%3E%3D20.19-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
 
@@ -38,6 +38,8 @@ stack runs from a single `docker compose up`.
 > keeping full ownership of your files — and to let AI agents read/write your vault through
 > a safe, scoped REST API.
 
+Repo gốc: https://github.com/xnohat/webobsidian
+
 ---
 
 ## ✨ Features
@@ -45,24 +47,30 @@ stack runs from a single `docker compose up`.
 - 📝 **Editor & rendering** — CodeMirror 6 with live / source / reading views; wikilinks
   `[[note]]`, embeds `![[file]]`, tags `#tag`, callouts, task lists, KaTeX math and
   Mermaid diagrams.
-- 🕸️ **Graph view** — force-directed graph built from your wikilinks, with fly-to node
-  search and highlighting.
+- 🎨 **Canvas & Excalidraw** — visual canvas for connecting notes, cards, and media;
+  Excalidraw whiteboard integration for freeform drawing.
+- 🕸️ **Graph view** — GPU-accelerated (PixiJS) force-directed graph built from your
+  wikilinks, with fly-to node search and highlighting.
 - 🔗 **Backlinks & outline** — right sidebar tab strip: Backlinks (linked **and** unlinked
   mentions), Outgoing links (resolved/unresolved), Tags and Outline.
 - 🔍 **QMD search** — fast full-text + fielded search (`tag:`, `path:`, `title:`), fuzzy +
   prefix matching, incremental indexing, persisted to disk for fast startup.
 - 🔄 **GitHub sync** — native `git` pull / commit / push with **Git LFS** for large
   attachments, optional auto-sync, and per-file **version history** (browse & restore).
-- 🔐 **Login gate** — a single master password (scrypt-hashed) protects everything; JWT in
-  an httpOnly cookie.
+- 🔐 **Secure sign-in** — a scrypt-hashed master password, optional authenticator-app
+  2FA with one-time recovery codes, and passwordless Passkeys/WebAuthn; sessions use an
+  httpOnly cookie and are revoked after sensitive account changes.
 - 🌐 **Public sharing** — turn any note into a read-only, server-rendered (SEO-friendly)
   public page at `/share/<token>`, optionally password-protected.
 - 🤖 **Agent API** — scoped API keys (`read` / `write` / `search`) let AI agents work with
   the vault over REST at `/api/v1`. See [docs/AGENT_API.md](docs/AGENT_API.md).
-- 🧩 **Community plugins** — install Obsidian plugins from GitHub; loaded against an
-  Obsidian-API compatibility shim (subset support).
+- 🧩 **Community plugins** — CSP-safe loading with commands, hotkeys, custom views,
+  settings, ribbon/status items, Markdown processors, plugin data and clear diagnostics.
+  See the [compatibility matrix](docs/PLUGIN_COMPATIBILITY.md).
 - 📱 **Responsive / mobile** — drawer sidebars, edge-swipe, an on-keyboard formatting
   toolbar, and touch-friendly targets, à la Obsidian Mobile.
+- 📋 **Bases** — Obsidian Bases-style database views (table/task/list) over your notes
+  with a formula expression engine.
 - 🗃️ **Pure-JSON config** — everything lives in `data/settings.json`. No database.
 - 🐳 **Docker** — one command to run the whole stack.
 
@@ -71,7 +79,7 @@ stack runs from a single `docker compose up`.
 ## 🚀 Quick start (Docker)
 
 ```bash
-git clone https://github.com/xnohat/webobsidian.git
+git clone https://github.com/tuongzaza/obsidian.git webobsidian
 cd webobsidian
 cp .env.example .env          # edit VAULT_HOST_PATH, set WEBOBSIDIAN_PASSWORD
 docker compose up -d --build
@@ -82,28 +90,46 @@ Out of the box it serves the bundled `./sample-vault`, so the stack boots immedi
 deployment settings live in **`.env`** (git-ignored) — you never edit the tracked
 `docker-compose.yml`, so a `git pull` / redeploy keeps your config and vault mapping intact.
 
-## 🖥️ Desktop app (no server setup)
+## 🖥️ Electron desktop app
 
 Prefer a native app? Grab an installer from the
-[**Releases**](https://github.com/xnohat/webobsidian/releases) page — available for
-**macOS / Windows / Linux** (arm64 · x64 · ia32):
+[**Releases**](https://github.com/tuongzaza/obsidian/releases) page — available for
+**macOS / Windows / Linux**:
 
 | Platform | Download |
 |----------|----------|
-| macOS    | `.dmg` (or `.zip`) — arm64 / x64 |
-| Windows  | NSIS installer `.exe` or portable `.exe` — x64 / arm64 / ia32 |
-| Linux    | `.AppImage` or `.deb` — x64 / arm64 |
+| macOS    | `.dmg` / `.zip` — arm64, x64 |
+| Windows  | NSIS / portable `.exe` — x64, arm64, ia32 |
+| Linux    | `.AppImage` / `.deb` — x64, arm64 |
 
-The desktop app bundles the whole server, picks your vault folder on first launch, and
-**logs you in automatically** — no password to type, no Docker. Apps are currently
-**unsigned**, so macOS Gatekeeper / Windows SmartScreen will warn on first open (right-click →
-Open on macOS). Build it yourself with `npm run desktop:dist`; see
-[`desktop/README.md`](desktop/README.md) for details.
+The Electron app bundles the same React UI and an embedded loopback-only service, so it
+keeps full web feature parity while owning a **separate local vault**. On first launch,
+choose a vault folder. The hosted web app and desktop never mirror the open note or edit
+the same files implicitly; configure the same repository under **Settings → GitHub Sync**
+only when you want their vaults synchronized. Build with `npm run desktop:dist`; see
+[`desktop/README.md`](desktop/README.md).
 
-> 🔑 **Default password is `123456`.** Log in right away, then change it in
-> **Settings → Account**. To seed a different password on first run, set
-> `WEBOBSIDIAN_PASSWORD` in `.env`. Forgot it? Set `WEBOBSIDIAN_PASSWORD` (plaintext) or
-> `auth.passwordHash` (scrypt) as a recovery override.
+Apps are currently unsigned, so the operating system may warn on first launch.
+
+## 📱 Native Android app (prototype)
+
+A Compose Multiplatform client lives in [`native-client/`](native-client/). It renders
+natively through Skia/Android Canvas and uses Ktor/OkHttp for API access — no WebView
+or Capacitor. Currently supports: server login (password + TOTP), vault tree, full-text
+search, text editor with autosave, and adaptive two-column layouts.
+
+Build from the repository root (requires JDK 21 + Android SDK 36):
+
+```bash
+npm run mobile:apk
+# Output: native-client/composeApp/build/outputs/apk/debug/composeApp-debug.apk
+```
+
+See [`native-client/README.md`](native-client/README.md) for details and limitations.
+
+> 🔑 Docker requires a strong `WEBOBSIDIAN_PASSWORD` in `.env`. A bare-metal instance
+> bound only to localhost can instead complete the one-time password setup in the browser.
+> After login, enable authenticator 2FA and register Passkeys in **Settings → Account**.
 
 ### Point it at your own vault
 
@@ -122,6 +148,17 @@ Then `docker compose up -d --build`. Your vault can be a plain folder or a `git 
 
 Set `HTTP_BIND=127.0.0.1` so the app is only reachable from the host, then terminate TLS
 with nginx / Caddy / Traefik in front of `http://127.0.0.1:8787`.
+
+Passkeys require HTTPS (except on localhost). Set the canonical origin in `.env`, then
+rebuild the container:
+
+```bash
+PUBLIC_BASE_URL=https://notes.example.com
+PASSKEY_ORIGIN=https://notes.example.com
+PASSKEY_RP_ID=notes.example.com
+```
+
+Changing `PASSKEY_RP_ID` later makes Passkeys registered for the previous domain unusable.
 
 ### Large vaults & file watching
 
@@ -142,7 +179,7 @@ raise it to `8192` for very large vaults (e.g. 6k+ notes / multi-GB).
 
 ## 💻 Local development
 
-Requires **Node ≥ 20** and `git` (+ `git-lfs` if you use LFS).
+Requires **Node ≥ 20.19** and `git` (+ `git-lfs` if you use LFS).
 
 ```bash
 npm install
@@ -165,7 +202,12 @@ Useful scripts:
 | `npm run dev` | Run server + web together in watch mode |
 | `npm run build` | Build the web SPA, then compile the server |
 | `npm start` | Run the production server (serves built web) |
-| `npm run typecheck` | Type-check both workspaces |
+| `npm run typecheck` | Type-check both server and web workspaces |
+| `npm test` | Run tests across server, web, and desktop |
+| `npm run desktop` | Build web+server, then launch the Electron app |
+| `npm run desktop:dist` | Build web+server, then package Electron installers |
+| `npm run mobile:apk` | Build the native Android debug APK |
+| `npm run native:test` | Run native-client (Kotlin) tests |
 
 ---
 
@@ -176,9 +218,15 @@ Useful scripts:
 | Var | Default | Description |
 |-----|---------|-------------|
 | `VAULT_HOST_PATH` | `./sample-vault` | Host path bind-mounted to `/vault` |
-| `HTTP_BIND` | `0.0.0.0` | Host interface to publish on (`127.0.0.1` = local only) |
+| `HTTP_BIND` | `127.0.0.1` | Host interface to publish on (`127.0.0.1` = local only) |
 | `HTTP_PORT` | `8787` | Host port mapped to container `8787` |
 | `WEBOBSIDIAN_PASSWORD` | – | Seed/override the master password |
+| `PUBLIC_BASE_URL` | – | Canonical HTTPS origin for share metadata |
+| `PASSKEY_ORIGIN` | – | Canonical HTTPS origin used to register and verify Passkeys |
+| `PASSKEY_RP_ID` | origin hostname | WebAuthn relying-party domain |
+| `UPLOAD_MAX_BYTES` | `67108864` | Max upload size in bytes (default 64 MB) |
+| `UPLOAD_MAX_CONCURRENT` | `4` | Max simultaneous uploads |
+| `TRUST_PROXY` | `true` | Proxy trust for X-Forwarded-Proto HTTPS detection |
 | `WEBOBSIDIAN_WATCH` | `auto` | `auto` (native + polling fallback) or `polling` |
 
 ### App-level env (read by the server; Docker sets these inside the container)
@@ -186,10 +234,13 @@ Useful scripts:
 | Var | Default | Description |
 |-----|---------|-------------|
 | `PORT` | `8787` | HTTP port |
+| `HOST` | `0.0.0.0` | Listen address |
 | `VAULT_PATH` | `./sample-vault` | Path to the notes vault |
 | `DATA_DIR` | `./data` | Where `settings.json` + search index live |
 | `ALLOWED_ROOTS` | – | Comma-separated roots the vault picker may browse |
 | `WEBOBSIDIAN_PASSWORD` | – | Seed/override the master password |
+| `PASSKEY_ORIGIN` | request origin | Canonical HTTPS WebAuthn origin |
+| `PASSKEY_RP_ID` | origin hostname | WebAuthn relying-party domain |
 | `WEBOBSIDIAN_WATCH` | `auto` | File-watch mode: `auto` or `polling` |
 | `NODE_OPTIONS` | `--max-old-space-size=4096` | Node heap size — raise for large vaults |
 
@@ -220,7 +271,7 @@ STEP 1 — Download the skill into your runtime's skills directory
   (Claude Code: ~/.claude/skills · Codex: ~/.codex/skills · OpenCode: ~/.opencode/skills):
       SKILLS_DIR=~/.claude/skills        # change for your runtime
       mkdir -p "$SKILLS_DIR/webobsidian"
-      curl -fsSL https://raw.githubusercontent.com/xnohat/webobsidian/main/docs/agent-skill/webobsidian/SKILL.md \
+      curl -fsSL https://raw.githubusercontent.com/tuongzaza/obsidian/main/docs/agent-skill/webobsidian/SKILL.md \
         -o "$SKILLS_DIR/webobsidian/SKILL.md"
 
 STEP 2 — Set up credentials (ASK ME; never echo the key back). Ask me for my WebObsidian
@@ -271,34 +322,42 @@ curl -H "X-API-Key: $KEY" "$BASE/search?q=tag:idea%20graph&limit=5"
 
 ## 🏗️ Architecture
 
-Monorepo with two npm workspaces:
+Monorepo with three npm workspaces (`server`, `web`, `desktop`) plus a Kotlin
+Multiplatform native client:
 
 ```
 webobsidian/
-├── server/   # Express + TypeScript API
-│   └── src/{routes,services,middleware,plugins}
-├── web/      # React + Vite SPA (built into server/public)
+├── server/         # Express + TypeScript API
+│   └── src/{routes,services,middleware,lib}
+├── web/            # React + Vite SPA (built into server/public)
 │   └── src/{components,lib,styles}
-├── data/     # runtime: settings.json + search index (git-ignored)
-├── docs/     # AGENT_API.md, Obsidian internals notes
+├── desktop/        # Electron desktop app (local-first, embeds server)
+│   └── src/
+├── native-client/  # Kotlin Multiplatform / Compose (Android prototype)
+│   └── composeApp/
+├── mobile/         # Convenience scripts for native Android builds
+├── data/           # runtime: settings.json + search index (git-ignored)
+├── docs/           # AGENT_API.md, PLUGIN_COMPATIBILITY.md, agent-skill
+├── sample-vault/   # bundled demo vault for quick start
 ├── Dockerfile · docker-compose.yml · .env.example
 ```
 
 ```
 ┌──────────────────────── Browser (React SPA) ────────────────────────┐
-│   CodeMirror 6 · Live Preview · File Tree · Graph · Search           │
+│   CodeMirror 6 · Live Preview · Canvas · Excalidraw · Graph · Search │
 └───────────────▲──────────────────────────────────┬──────────────────┘
                 │ REST + WebSocket                  │ static assets
 ┌───────────────┴──────────────────────────────────▼──────────────────┐
-│                  Server (Node + Express + TypeScript)                │
+│                  Server (Node 22 + Express + TypeScript)             │
 │   Auth gate │ Vault FS │ QMD Search │ Git Sync │ API Gate │ Plugins  │
 └──────┬──────────────┬───────────┬────────────┬───────────────┬───────┘
    settings.json   Vault dir   Search index  GitHub repo    plugins dir
    (JSON config)   (.md+attach) (in-mem/disk) (git + LFS)   (.obsidian/plugins)
 ```
 
-**Tech stack:** Node 20+ · Express · TypeScript · React · Vite · CodeMirror 6 ·
-unified/remark/rehype · MiniSearch (QMD) · simple-git + git-lfs · scrypt + JWT · Docker.
+**Tech stack:** Node 22 · Express · TypeScript · React 18 · Vite · CodeMirror 6 · PixiJS ·
+Excalidraw · unified/remark/rehype · MiniSearch (QMD) · simple-git + git-lfs ·
+scrypt + JWT · WebAuthn · Zustand · Electron · Kotlin/Compose Multiplatform · Docker.
 
 See [PRD.md §2](PRD.md) for the full design.
 
@@ -313,6 +372,8 @@ See [PRD.md §2](PRD.md) for the full design.
   `ALLOWED_ROOTS`.
 - Secrets (git token / API keys) live in `data/settings.json` on the server — mount `/data`
   as a private volume and keep it off version control. **Change the default password.**
+- The Electron desktop app binds to `127.0.0.1` only, enables `contextIsolation` and
+  renderer sandbox, and disables Node integration.
 
 ---
 
@@ -321,8 +382,9 @@ See [PRD.md §2](PRD.md) for the full design.
 - ✅ Works directly on an existing Obsidian vault, including `.obsidian/` config.
 - ⚠️ **Single-user (v1)** — no real-time multi-user collaborative editing yet.
 - ⚠️ Git sync replaces Obsidian Sync/Publish.
-- ⚠️ Community-plugin support is a **subset** of the Obsidian API; plugins relying on
-  Electron/Node internals may not work.
+- ⚠️ Community-plugin support targets the public browser-compatible Obsidian API;
+  Electron/Node and private-internal plugins are not supported. See
+  [Community plugin compatibility](docs/PLUGIN_COMPATIBILITY.md).
 
 ---
 

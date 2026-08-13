@@ -16,22 +16,49 @@ const ApiKeySchema = z.object({
   lastUsed: z.string().nullable().default(null),
 });
 
+const PasskeySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  publicKey: z.string(),
+  counter: z.number().int().nonnegative(),
+  transports: z
+    .array(z.enum(['ble', 'cable', 'hybrid', 'internal', 'nfc', 'smart-card', 'usb']))
+    .default([]),
+  deviceType: z.enum(['singleDevice', 'multiDevice']),
+  backedUp: z.boolean(),
+  createdAt: z.string(),
+  lastUsedAt: z.string().nullable().default(null),
+});
+
 const SettingsSchema = z.object({
   version: z.number().default(1),
   auth: z
     .object({
-      // Mật khẩu người dùng đã đổi. Rỗng = đang dùng mật khẩu mặc định (123456).
+      // Empty only until the one-time setup flow stores the first password.
       userPasswordHash: z.string().default(''),
       // Mật khẩu override để khôi phục khi quên pass (sửa tay vào file). Rỗng = không có.
       passwordHash: z.string().default(''),
       jwtSecret: z.string().default(''),
+      sessionVersion: z.number().int().nonnegative().default(0),
+      totp: z
+        .object({
+          enabled: z.boolean().default(false),
+          secretEncrypted: z.string().default(''),
+          recoveryCodeHashes: z.array(z.string()).default([]),
+          lastUsedTimeStep: z.number().int().nonnegative().nullable().default(null),
+        })
+        .default({}),
+      passkeys: z.array(PasskeySchema).default([]),
     })
     .default({}),
   vault: z
     .object({
       path: z.string().default(''),
       allowedRoots: z.array(z.string()).default([]),
-      trash: z.string().default('.trash'),
+      trash: z
+        .string()
+        .refine(isSafeVaultRelativeDir, 'Trash directory must be a safe vault-relative path')
+        .default('.trash'),
       // Xoá file: 'trash' = chuyển vào thư mục .trash (khôi phục được);
       // 'permanent' = xoá vĩnh viễn ngay.
       deleteMode: z.enum(['trash', 'permanent']).default('trash'),
@@ -83,6 +110,7 @@ const SettingsSchema = z.object({
 
 export type Settings = z.infer<typeof SettingsSchema>;
 export type ApiKeyRecord = z.infer<typeof ApiKeySchema>;
+export type PasskeyRecord = z.infer<typeof PasskeySchema>;
 
 /** ---- Store --------------------------------------------------------------- */
 
@@ -92,29 +120,16 @@ function defaults(): Settings {
   const base = SettingsSchema.parse({});
   base.auth.jwtSecret = randomBytes(48).toString('hex');
   base.vault.path = config.defaultVaultPath;
-  base.vault.allowedRoots = config.allowedRoots.length
-    ? config.allowedRoots
-    : [path.dirname(config.defaultVaultPath), config.defaultVaultPath];
+  // Kept in the persisted schema for backward compatibility/display only.
+  // Authorization always uses host-owned config.allowedRoots.
+  base.vault.allowedRoots = config.allowedRoots.length ? config.allowedRoots : [config.defaultVaultPath];
   return base;
 }
 
-/**
- * Guarantee the folder browser can reach the configured vault. The default
- * allowedRoots are derived from the sample vault, so pointing the vault at a
- * path outside them (e.g. ~/ObsidianVault) made Browse… return 403 with
- * "Path outside allowed roots". Add the vault's parent directory as a root
- * whenever it isn't already covered. Returns true if it mutated the draft.
- */
-export function ensureVaultBrowsable(d: Settings): boolean {
-  const vaultPath = path.resolve(d.vault.path);
-  const roots = d.vault.allowedRoots ?? [];
-  const covered = roots.some((r) => {
-    const rr = path.resolve(r);
-    return vaultPath === rr || vaultPath.startsWith(rr + path.sep);
-  });
-  if (covered) return false;
-  d.vault.allowedRoots = [...roots, path.dirname(vaultPath)];
-  return true;
+export function isSafeVaultRelativeDir(value: string): boolean {
+  if (!value || path.isAbsolute(value)) return false;
+  const parts = value.replaceAll('\\', '/').split('/');
+  return parts.every((part) => part !== '' && part !== '.' && part !== '..' && part !== '.git');
 }
 
 async function ensureDataDir(): Promise<void> {
@@ -147,20 +162,18 @@ export async function loadSettings(): Promise<Settings> {
       parsed.auth.jwtSecret = randomBytes(48).toString('hex');
       dirty = true;
     }
-    // Migration: trước đây `passwordHash` là mật khẩu đăng nhập. Mô hình mới coi
-    // `passwordHash` là mật khẩu override và `userPasswordHash` là pass đăng nhập
-    // (rỗng = mặc định 123456). Để file cũ không bị backdoor bằng 123456, chuyển
-    // pass cũ sang `userPasswordHash` rồi xoá field override.
+    // Migration: older versions used `passwordHash` as the primary password.
     if (parsed.auth.passwordHash && !parsed.auth.userPasswordHash) {
       parsed.auth.userPasswordHash = parsed.auth.passwordHash;
       parsed.auth.passwordHash = '';
       dirty = true;
     }
-    // Heal older files whose allowedRoots predate the current vault path.
-    if (ensureVaultBrowsable(parsed)) dirty = true;
     cache = parsed;
     if (dirty) await persist(cache);
-  } catch {
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') {
+      throw new Error(`Unable to load settings safely: ${error instanceof Error ? error.message : String(error)}`);
+    }
     cache = defaults();
     await persist(cache);
   }
@@ -188,10 +201,16 @@ export async function updateSettings(
 export function redactSettings(s: Settings) {
   return {
     ...s,
+    vault: {
+      ...s.vault,
+      allowedRoots: config.allowedRoots.length ? config.allowedRoots : [s.vault.path],
+    },
     auth: {
-      // hasCustomPassword=false nghĩa là đang dùng mật khẩu mặc định (123456).
       hasCustomPassword: Boolean(s.auth.userPasswordHash),
       hasOverridePassword: Boolean(s.auth.passwordHash),
+      totpEnabled: s.auth.totp.enabled,
+      recoveryCodesRemaining: s.auth.totp.recoveryCodeHashes.length,
+      passkeyCount: s.auth.passkeys.length,
     },
     git: { ...s.git, token: s.git.token ? '••••••••' : '' },
     api: {

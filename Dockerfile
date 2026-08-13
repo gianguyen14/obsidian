@@ -6,9 +6,18 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 COPY server/package.json ./server/
 COPY web/package.json ./web/
-RUN npm install
+COPY desktop/package.json ./desktop/
+RUN npm ci
 COPY . .
 RUN npm run build
+
+# Reuse the dependencies already downloaded above. Focusing the root manifest on
+# the server workspace before pruning removes web/desktop packages while keeping
+# the exact production dependency tree from package-lock.json.
+RUN npm pkg delete workspaces \
+    && npm pkg set 'workspaces[0]=server' \
+    && npm prune --omit=dev \
+    && npm cache clean --force
 
 # ---- Runtime stage ----
 FROM node:22-alpine AS runtime
@@ -18,10 +27,11 @@ ENV NODE_ENV=production
 # git + git-lfs are required for vault sync
 RUN apk add --no-cache git git-lfs && git lfs install --system
 
-# Install production deps for the server workspace only
-COPY package.json package-lock.json* ./
-COPY server/package.json ./server/
-RUN npm install --omit=dev --workspace server
+# Copy the production-only server dependencies prepared in the build stage.
+# This avoids a second network-dependent npm install during the image build.
+COPY --from=build /app/package.json ./
+COPY --from=build /app/server/package.json ./server/
+COPY --from=build /app/node_modules ./node_modules
 
 # Copy built artifacts
 COPY --from=build /app/server/dist ./server/dist
@@ -33,6 +43,9 @@ ENV PORT=8787 \
     VAULT_PATH=/vault \
     ALLOWED_ROOTS=/vault \
     NODE_OPTIONS=--max-old-space-size=4096
+
+RUN mkdir -p /data /vault && chown -R node:node /app /data /vault
+USER node
 
 VOLUME ["/vault", "/data"]
 EXPOSE 8787

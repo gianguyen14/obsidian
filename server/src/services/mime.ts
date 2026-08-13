@@ -4,6 +4,10 @@ import path from 'node:path';
 // route, the public-share raw route and the SSR renderer. Keep the audio/video
 // sets in sync with web/src/lib/media.ts (Obsidian parity).
 const MIME: Record<string, string> = {
+  // web/plugin resources
+  '.js': 'application/javascript; charset=utf-8', '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf',
   // images
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
   '.svg': 'image/svg+xml', '.webp': 'image/webp', '.bmp': 'image/bmp', '.avif': 'image/avif',

@@ -10,6 +10,7 @@ import { StateField, StateEffect, type EditorState, type Range, type Text } from
 import { syntaxTree } from '@codemirror/language';
 import { CALLOUT_SLOT, CALLOUT_RE, calloutDefaultTitle, calloutIconSvg } from './callouts';
 import { openLightbox } from './imageLightbox';
+import { EXCALIDRAW_RE, renderExcalidrawEmbed } from './excalidraw';
 import { VIDEO_EXT_RE, AUDIO_EXT_RE } from './media';
 
 /**
@@ -341,6 +342,32 @@ class MediaWidget extends WidgetType {
     };
     wrap.appendChild(el);
     return wrap;
+  }
+}
+
+/** Native Excalidraw preview for `![[drawing.excalidraw]]`. */
+class ExcalidrawEmbedWidget extends WidgetType {
+  constructor(readonly target: string, readonly width?: number) {
+    super();
+  }
+  eq(other: ExcalidrawEmbedWidget) {
+    return other.target === this.target && other.width === this.width;
+  }
+  toDOM() {
+    const wrap = document.createElement('div');
+    wrap.className = 'cm-excalidraw-embed';
+    const cleanup = renderExcalidrawEmbed(wrap, this.target, {
+      width: this.width,
+      onOpen: () => openLink(this.target),
+    });
+    (wrap as HTMLElement & { __excalidrawCleanup?: () => void }).__excalidrawCleanup = cleanup;
+    return wrap;
+  }
+  destroy(dom: HTMLElement) {
+    (dom as HTMLElement & { __excalidrawCleanup?: () => void }).__excalidrawCleanup?.();
+  }
+  ignoreEvent() {
+    return true;
   }
 }
 
@@ -2351,7 +2378,15 @@ function buildDecorations(view: EditorView): DecorationSet {
           .normalize('NFC');
         const alias = pi > 0 ? inner.slice(pi + 1).trim() : null;
         const defaultDisplay = href.split('#').filter(Boolean).join(' > ');
-        if (isEmbed && /\.(bmp|png|jpe?g|gif|svg|webp|avif)$/i.test(href)) {
+        if (isEmbed && EXCALIDRAW_RE.test(href)) {
+          let w: number | undefined;
+          if (pi > 0) {
+            const segs = inner.split('|');
+            const sm = segs[segs.length - 1].match(/^\s*([0-9]+)\s*$/);
+            if (sm) w = Number(sm[1]);
+          }
+          pushReplace(s, e, Decoration.replace({ widget: new ExcalidrawEmbedWidget(href, w) }));
+        } else if (isEmbed && /\.(bmp|png|jpe?g|gif|svg|webp|avif)$/i.test(href)) {
           // image size param: the LAST `|` segment, `300` or `300x200`
           let w: number | undefined;
           let h: number | undefined;

@@ -60,6 +60,7 @@ function RenameInput({ node, onDone }: { node: TreeNode; onDone: () => void }) {
 function fileIcon(node: TreeNode): string | null {
   const ext = node.ext ?? '';
   if (/\.(md|markdown)$/.test(ext)) return null; // markdown: text only, like Obsidian
+  if (ext === '.excalidraw') return 'pencil';
   if (/\.(png|jpe?g|gif|svg|webp)$/.test(ext)) return 'image';
   if (ext === '.pdf') return 'file-pdf';
   return 'paperclip';
@@ -145,6 +146,7 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
   const setClipboard = useStore((s) => s.setClipboard);
   const newNote = useStore((s) => s.newNote);
   const newCanvas = useStore((s) => s.newCanvas);
+  const newDrawing = useStore((s) => s.newDrawing);
   const newFolder = useStore((s) => s.newFolder);
   const renamingPath = useStore((s) => s.renamingPath);
   const setRenamingPath = useStore((s) => s.setRenamingPath);
@@ -298,6 +300,7 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
     const items = isFolder
       ? [
           { label: 'New note', onClick: () => newNote(node.path) },
+          { label: 'New drawing', onClick: () => newDrawing(node.path) },
           { label: 'New canvas', onClick: () => newCanvas(node.path) },
           { label: 'New folder', onClick: () => newFolder(node.path) },
           { label: '', separator: true },
@@ -413,7 +416,7 @@ function Node({ node, depth }: { node: TreeNode; depth: number }) {
         {editing ? (
           <RenameInput node={node} onDone={() => setRenamingPath(null)} />
         ) : (
-          <span className="name">{node.name.replace(/\.(md|markdown)$/, '')}</span>
+          <span className="name">{node.name.replace(/\.(md|markdown|excalidraw)$/, '')}</span>
         )}
         {shares.some((s) => s.path === node.path && s.enabled) && (
           <Icon name="globe" size={12} className="share-globe" />
@@ -475,6 +478,7 @@ export default function FileTree() {
   const openContextMenu = useStore((s) => s.openContextMenu);
   const newNote = useStore((s) => s.newNote);
   const newCanvas = useStore((s) => s.newCanvas);
+  const newDrawing = useStore((s) => s.newDrawing);
   const newFolder = useStore((s) => s.newFolder);
   const activePath = useStore((s) => s.activePath);
   const autoReveal = useStore((s) => s.autoReveal);
@@ -557,6 +561,7 @@ export default function FileTree() {
       y: e.clientY,
       items: [
         { label: 'New note', onClick: () => newNote('') },
+        { label: 'New drawing', onClick: () => newDrawing('') },
         { label: 'New canvas', onClick: () => newCanvas('') },
         { label: 'New folder', onClick: () => newFolder('') },
         ...(clipboard

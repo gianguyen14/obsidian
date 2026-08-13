@@ -1,15 +1,18 @@
 {
   "name": "@webobsidian/desktop",
-  "version": "0.1.1",
+  "version": "0.3.0",
   "private": true,
-  "description": "WebObsidian desktop app (Electron shell around the self-hosted server)",
+  "description": "Local-first WebObsidian desktop app with an embedded vault service",
   "author": "xnohat <xnohat@gmail.com>",
   "homepage": "https://github.com/xnohat/webobsidian",
   "license": "MIT",
   "main": "dist/main.js",
+  "desktopName": "webobsidian.desktop",
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "smoke:local": "node scripts/smoke-local-first.mjs",
     "start": "electron dist/main.js",
     "dev": "node scripts/build.mjs && electron dist/main.js",
     "dist": "node scripts/build.mjs && electron-builder",
@@ -17,27 +20,25 @@
     "dist:publish": "node scripts/build.mjs && electron-builder --publish always"
   },
   "devDependencies": {
-    "electron": "33.4.11",
-    "electron-builder": "^25.1.8",
-    "esbuild": "^0.24.0"
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
   },
   "build": {
     "appId": "com.xnohat.webobsidian",
     "productName": "WebObsidian",
+    "executableName": "webobsidian",
     "copyright": "Copyright © 2026 xnohat",
-    "electronVersion": "33.4.11",
+    "electronVersion": "43.2.0",
     "directories": {
       "output": "release",
       "buildResources": "buildResources"
     },
-    "files": [
-      "dist/**/*"
-    ],
+    "files": ["dist/**/*"],
     "extraResources": [
-      {
-        "from": ".gen/server",
-        "to": "server"
-      }
+      { "from": ".gen/server", "to": "server" }
     ],
     "asar": true,
     "electronLanguages": ["en-US"],
@@ -50,9 +51,6 @@
       ],
       "darkModeSupport": true,
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
-    },
-    "dmg": {
-      "writeUpdateInfo": false
     },
     "win": {
       "icon": "buildResources/icon.png",
@@ -70,9 +68,9 @@
     },
     "linux": {
       "icon": "buildResources/icon.png",
-      "category": "Utility",
+      "category": "Office",
       "maintainer": "xnohat <xnohat@gmail.com>",
-      "synopsis": "Self-hosted Obsidian-compatible notes app",
+      "syncDesktopName": true,
       "target": [
         { "target": "AppImage", "arch": ["x64", "arm64"] },
         { "target": "deb", "arch": ["x64", "arm64"] }
@@ -80,11 +78,7 @@
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
     },
     "publish": [
-      {
-        "provider": "github",
-        "owner": "xnohat",
-        "repo": "webobsidian"
-      }
+      { "provider": "github", "owner": "xnohat", "repo": "webobsidian" }
     ]
   }
 }
