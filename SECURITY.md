@@ -7,7 +7,7 @@
 Instead, report privately:
 
 - Use **GitHub Security Advisories** ("Report a vulnerability" on the Security tab), or
-- Email the maintainer: **xnohat@gmail.com**
+- Email the maintainer: **web.tuong.me@gmail.com**
 
 Please include:
 
@@ -25,8 +25,10 @@ safely. Key points:
 
 - **Change the default password (`123456`)** immediately after first login.
 - Master password is scrypt-hashed; the JWT secret is auto-generated.
+- Optional **authenticator-app 2FA** (TOTP) with one-time recovery codes and
+  passwordless **Passkeys/WebAuthn**; sessions are revoked after sensitive account changes.
 - API keys are hashed at rest and scoped (`read` / `write` / `search`) with per-key rate
-  limiting.
+  limiting and audit logging.
 - File paths are guarded against traversal; the vault picker is confined to `ALLOWED_ROOTS`.
 - Secrets (git token, API keys) live in `data/settings.json` on the server — mount `/data`
   as a private volume and keep it out of version control.
@@ -36,6 +38,9 @@ safely. Key points:
   if you want, or set `TRUST_PROXY=false` for an instance exposed directly to clients
   with no proxy. Either way the login rate limit is keyed on the real TCP socket
   address, so it cannot be bypassed by rotating `X-Forwarded-For`.
+- The **Electron desktop app** binds the embedded service to `127.0.0.1` only, enables
+  `contextIsolation` and renderer sandbox, disables Node integration, and locks navigation
+  to the loopback origin. External links open in the system browser.
 
 ## Supported versions
 

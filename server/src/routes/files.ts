@@ -9,6 +9,7 @@ import * as vault from '../services/vault.js';
 import { getSettings } from '../services/settings.js';
 import { qmd } from '../services/search.js';
 import { updateLinkGraphForFile } from '../services/links.js';
+import { removeMetaCache, upsertMetaCache } from '../services/metacache.js';
 import { scheduleAutoCommitOnSave } from '../services/git.js';
 import { resolveFile } from '../services/fileindex.js';
 import { onFileRenamed } from '../services/shares.js';
@@ -54,8 +55,12 @@ const isMd = (p: string) => /\.(md|markdown)$/i.test(p);
 // Incremental: only the touched file(s) are reparsed, not the whole vault.
 function reindex(opts: { upsert?: string; added?: string; removed?: string } = {}) {
   if (opts.upsert) void qmd.upsert(opts.upsert).catch(() => {});
+  if (opts.upsert && isMd(opts.upsert)) void upsertMetaCache(opts.upsert).catch(() => {});
   if (opts.added && isMd(opts.added)) void updateLinkGraphForFile(opts.added).catch(() => {});
-  if (opts.removed && isMd(opts.removed)) void updateLinkGraphForFile(opts.removed, true).catch(() => {});
+  if (opts.removed && isMd(opts.removed)) {
+    removeMetaCache(opts.removed);
+    void updateLinkGraphForFile(opts.removed, true).catch(() => {});
+  }
   scheduleAutoCommitOnSave();
 }
 
@@ -237,9 +242,17 @@ filesRouter.delete(
       res.status(400).json({ error: 'path required' });
       return;
     }
+    // `mode` lets callers pin the semantics instead of inheriting the vault
+    // default: the Obsidian plugin API exposes vault.trash() and vault.delete()
+    // as two distinct operations, so the shim must be able to force either one.
+    const mode = String(req.query.mode ?? '');
+    if (mode && mode !== 'trash' && mode !== 'permanent') {
+      res.status(400).json({ error: 'mode must be "trash" or "permanent"' });
+      return;
+    }
     const s = await getSettings();
     qmd.remove(rel);
-    if (s.vault.deleteMode === 'permanent') {
+    if (mode ? mode === 'permanent' : s.vault.deleteMode === 'permanent') {
       await vault.remove(rel);
       reindex({ removed: rel });
       res.json({ ok: true, deleted: rel });

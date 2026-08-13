@@ -13,6 +13,7 @@ import {
   runPluginCommand,
   subscribePluginRuntime,
 } from '../lib/plugins';
+import BasesPluginView, { useBasesSourceFiles } from './BasesPluginView';
 import { useStore, type ContextMenuItem } from '../lib/store';
 import Icon from './Icon';
 
@@ -51,6 +52,15 @@ export default function BaseView() {
     [parsed.definition, view],
   );
 
+  // A plugin-contributed view type (tasknotesCalendar, …) renders itself; the
+  // built-in flat list is only the fallback for types nothing registered.
+  const registration = pluginRuntime.basesViews[view.type];
+  const [renderError, setRenderError] = useState('');
+  const [queryCount, setQueryCount] = useState(0);
+  const { files: sourceFiles, loading: sourceLoading } = useBasesSourceFiles(Boolean(registration), tree);
+
+  useEffect(() => { setRenderError(''); }, [view.type, activePath]);
+
   useEffect(() => {
     setViewIndex(0);
     setSearchOpen(false);
@@ -67,9 +77,13 @@ export default function BaseView() {
     window.setTimeout(() => searchInput.current?.focus(), 0);
   }, [searchOpen]);
 
+  const pluginRendered = Boolean(registration) && !renderError;
+
   useEffect(() => {
     let cancelled = false;
-    if (!taskTag) {
+    // The plugin renderer runs the real Bases query itself; this tag search is
+    // only for the fallback list, including when that renderer failed.
+    if (!taskTag || pluginRendered) {
       setHits([]);
       return;
     }
@@ -79,13 +93,17 @@ export default function BaseView() {
       .catch(() => { if (!cancelled) setHits([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [taskTag, tree]);
+  }, [taskTag, tree, pluginRendered]);
 
   const visibleHits = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return hits;
     return hits.filter((hit) => taskTitle(hit).toLowerCase().includes(query) || hit.path.toLowerCase().includes(query));
   }, [hits, search]);
+
+  // With a plugin renderer the count comes from the executed query, not the
+  // fallback list, so the toolbar cannot report the list length.
+  const resultCount = pluginRendered ? queryCount : visibleHits.length;
 
   const showMenu = (target: EventTarget & HTMLElement, items: ContextMenuItem[]) => {
     openContextMenu({ ...menuPosition(target), items });
@@ -147,7 +165,7 @@ export default function BaseView() {
     <div className="bases-view">
       <div className="bases-toolbar">
         <button className="bases-toolbar-button bases-view-select" type="button" onClick={openViews}>
-          <Icon name={view.type.startsWith('tasknotes') ? 'check-square' : 'table'} size={17} />
+          <Icon name={registration?.icon || (view.type.startsWith('tasknotes') ? 'check-square' : 'table')} size={17} />
           <span>{view.name}</span>
           <Icon name="chevrons-up-down" size={13} className="bases-view-chevron" />
         </button>
@@ -156,11 +174,11 @@ export default function BaseView() {
           type="button"
           title="View result actions"
           onClick={(event) => showMenu(event.currentTarget, [
-            { label: visibleHits.length ? 'Copy results' : 'No results to copy', icon: 'copy' },
-            { label: visibleHits.length ? 'Export CSV' : 'No results to export', icon: 'file' },
+            { label: resultCount ? 'Copy results' : 'No results to copy', icon: 'copy' },
+            { label: resultCount ? 'Export CSV' : 'No results to export', icon: 'file' },
           ])}
         >
-          {visibleHits.length} {visibleHits.length === 1 ? 'result' : 'results'}
+          {resultCount} {resultCount === 1 ? 'result' : 'results'}
         </button>
         <span className="bases-toolbar-grow" />
         <button className="bases-toolbar-button" type="button" onClick={openSort}>
@@ -175,21 +193,25 @@ export default function BaseView() {
           <Icon name="list-tree" size={17} />
           <span>Properties</span>
         </button>
-        <button
-          className={`bases-toolbar-button ${searchOpen ? 'active' : ''}`}
-          type="button"
-          onClick={() => setSearchOpen((open) => !open)}
-        >
-          <Icon name="search" size={17} />
-          <span>Search</span>
-        </button>
+        {/* Search filters the fallback list only; a plugin renderer owns its
+            own filtering, so the control would do nothing there. */}
+        {!pluginRendered && (
+          <button
+            className={`bases-toolbar-button ${searchOpen ? 'active' : ''}`}
+            type="button"
+            onClick={() => setSearchOpen((open) => !open)}
+          >
+            <Icon name="search" size={17} />
+            <span>Search</span>
+          </button>
+        )}
         <button className="bases-toolbar-button" type="button" onClick={createTask}>
           <Icon name="plus" size={17} />
           <span>New</span>
         </button>
       </div>
 
-      {searchOpen && (
+      {searchOpen && !pluginRendered && (
         <div className="bases-search-row">
           <Icon name="search" size={16} />
           <input
@@ -213,12 +235,26 @@ export default function BaseView() {
         </div>
       )}
 
-      <div className="bases-content">
+      <div className={`bases-content ${pluginRendered ? 'bases-content-plugin' : ''}`.trim()}>
         {parsed.error ? (
           <div className="bases-error">
             <strong>Could not read this Base.</strong>
             <span>{parsed.error}</span>
           </div>
+        ) : pluginRendered ? (
+          sourceLoading ? (
+            <div className="bases-loading">Loading results…</div>
+          ) : (
+            <BasesPluginView
+              key={`${activePath}:${view.type}:${view.name}`}
+              registration={registration}
+              definition={parsed.definition}
+              view={view}
+              files={sourceFiles}
+              onError={setRenderError}
+              onCount={setQueryCount}
+            />
+          )
         ) : loading ? (
           <div className="bases-loading">Loading results…</div>
         ) : visibleHits.length ? (
@@ -235,6 +271,11 @@ export default function BaseView() {
           </div>
         ) : (
           <div className="bases-empty">{search ? `No results matching “${search}”.` : emptyText}</div>
+        )}
+        {registration && renderError && (
+          <div className="bases-render-warning">
+            {`The ${view.type} view from the plugin failed to render (${renderError}); showing a basic list instead.`}
+          </div>
         )}
       </div>
     </div>

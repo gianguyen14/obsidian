@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { qmd } from '../services/search.js';
 import { backlinksFor, graphData, resolveLink, buildLinkGraph } from '../services/links.js';
 import { resolveFile } from '../services/fileindex.js';
+import { allMetaCaches, getMetaCache, linkMaps } from '../services/metacache.js';
 import { readPropertyTypes, setPropertyType } from '../services/propertytypes.js';
 
 export const searchRouter = Router();
@@ -42,6 +43,21 @@ searchRouter.get(
   '/tags',
   asyncHandler(async (_req, res) => {
     res.json({ tags: qmd.allTags() });
+  }),
+);
+
+// Obsidian metadata cache. Without `path` the whole vault is returned so the
+// plugin shim can answer getFileCache() synchronously for any file; with `path`
+// only that entry is sent (used to refresh a single note after an edit).
+searchRouter.get(
+  '/metacache',
+  asyncHandler(async (req, res) => {
+    const rel = String(req.query.path ?? '');
+    if (rel) {
+      res.json({ path: rel, cache: getMetaCache(rel) });
+      return;
+    }
+    res.json({ caches: allMetaCaches(), ...linkMaps() });
   }),
 );
 

@@ -29,6 +29,7 @@ import { sharePageRouter } from './routes/sharepage.js';
 import { initSearch, qmd } from './services/search.js';
 import { buildLinkGraph, updateLinkGraphForFile } from './services/links.js';
 import { buildFileIndex, indexFile, unindexFile } from './services/fileindex.js';
+import { buildMetaCache, removeMetaCache, upsertMetaCache } from './services/metacache.js';
 import { setBroadcaster, broadcast } from './services/realtime.js';
 import { getVaultRoot, ensureVault, invalidateStat } from './services/vault.js';
 import { startAutoSync } from './services/autosync.js';
@@ -132,6 +133,7 @@ async function main() {
   await initSearch();
   await buildLinkGraph();
   await buildFileIndex();
+  await buildMetaCache();
   console.log('[boot] index ready');
 
   const server = http.createServer(app);
@@ -302,9 +304,11 @@ function startWatcher(root: string, usePolling: boolean) {
       // when Obsidian touched files in the background.
       if (type === 'unlink') {
         qmd.remove(rel);
+        removeMetaCache(rel);
         await updateLinkGraphForFile(rel, true).catch(() => {});
       } else {
         await qmd.upsert(rel).catch(() => {});
+        await upsertMetaCache(rel).catch(() => {});
         await updateLinkGraphForFile(rel).catch(() => {});
       }
     }

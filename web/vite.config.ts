@@ -23,13 +23,20 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
-    proxy: {
+    port: 5173,    proxy: {
       '/api': 'http://localhost:8787',
       '/auth': 'http://localhost:8787',
       '/public': 'http://localhost:8787',
       '/share': 'http://localhost:8787', // SSR share page is server-rendered even in dev
       '/ws': { target: 'ws://localhost:8787', ws: true },
     },
+  },
+  test: {
+    // Only this workspace: server/ and desktop/ use node --test, and their
+    // files would otherwise be collected when vitest runs from the repo root.
+    root: import.meta.dirname,
+    include: ['src/**/*.test.{ts,tsx}'],
+    // happy-dom here has no localStorage; setup.ts polyfills it.
+    setupFiles: ['./test/setup.ts'],
   },
 });

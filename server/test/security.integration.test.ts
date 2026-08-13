@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -472,6 +472,29 @@ test('security-sensitive setup, session and vault boundaries', async () => {
   assert.deepEqual(Buffer.from(await nestedPluginAsset.arrayBuffer()), Buffer.from([0, 1, 2, 3]));
   const pluginTraversal = await jsonRequest(base, '/api/plugins/runtime-smoke/%2e%2e%2fmanifest.json', { headers: { Cookie: oldCookie } });
   assert.equal(pluginTraversal.status, 400);
+
+  // Uninstall must be genuinely atomic: the folder is deleted and the plugin is
+  // dropped from BOTH `enabled` and `installed`. A build that only cleared
+  // `enabled` (or lacked the route entirely) left the plugin installed and
+  // merely disabled.
+  const traversalUninstall = await jsonRequest(base, '/api/plugins/..%2f..%2fescape', {
+    method: 'DELETE', headers: { Cookie: oldCookie },
+  });
+  assert.equal(traversalUninstall.status, 400);
+
+  const uninstalled = await jsonRequest(base, '/api/plugins/runtime-smoke', {
+    method: 'DELETE', headers: { Cookie: oldCookie },
+  });
+  assert.equal(uninstalled.status, 200);
+  assert.equal((await uninstalled.json() as { ok: boolean }).ok, true);
+  assert.equal(existsSync(pluginDir), false);
+  const afterUninstall = await jsonRequest(base, '/api/plugins/', { headers: { Cookie: oldCookie } });
+  assert.deepEqual((await afterUninstall.json() as { plugins: unknown[] }).plugins, []);
+  const settingsAfterUninstall = JSON.parse(
+    await fs.readFile(path.join(dataDir, 'settings.json'), 'utf8'),
+  ) as { plugins: { enabled: string[]; installed: string[] } };
+  assert.equal(settingsAfterUninstall.plugins.enabled.includes('runtime-smoke'), false);
+  assert.equal(settingsAfterUninstall.plugins.installed.includes('runtime-smoke'), false);
 
   const shareResponse = await jsonRequest(base, '/api/shares', {
     method: 'POST',

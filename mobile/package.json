@@ -1,0 +1,11 @@
+{
+  "name": "@webobsidian/mobile",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Compatibility commands for the native WebObsidian Android app",
+  "license": "MIT",
+  "scripts": {
+    "apk": "../native-client/gradlew -p ../native-client :composeApp:assembleDebug",
+    "test": "../native-client/gradlew -p ../native-client :composeApp:allTests"
+  }
+}

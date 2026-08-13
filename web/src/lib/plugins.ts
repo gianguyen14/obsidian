@@ -23,6 +23,8 @@ import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import { api, type TreeNode } from './api';
 import { useStore } from './store';
 import { getActiveEditor } from './activeEditor';
+import { detectNativeShell } from './nativeShell';
+import { isMobileViewport, TABLET_QUERY } from './useIsMobile';
 import { renderMarkdown } from './markdown';
 
 type AnyFn = (...args: any[]) => any;
@@ -56,6 +58,18 @@ export interface PluginSettingContribution {
   tab: PluginSettingTab;
 }
 
+/**
+ * A Bases view type contributed by a plugin (`app.registerBasesView`). The
+ * factory receives the query controller and a container element, and returns
+ * the view object that Bases then injects `app`/`config`/`data` onto.
+ */
+export interface BasesViewRegistration {
+  name?: string;
+  icon?: string;
+  factory: (controller: unknown, containerEl: HTMLElement) => any;
+  options?: unknown;
+}
+
 export interface PluginRuntimeSnapshot {
   revision: number;
   plugins: Record<string, PluginRuntimeState>;
@@ -63,6 +77,7 @@ export interface PluginRuntimeSnapshot {
   ribbonItems: PluginDomContribution[];
   statusItems: PluginDomContribution[];
   settingTabs: PluginSettingContribution[];
+  basesViews: Record<string, BasesViewRegistration>;
 }
 
 const pluginStates = new Map<string, PluginRuntimeState>();
@@ -73,6 +88,9 @@ const settingTabs = new Map<string, PluginSettingContribution>();
 const viewCreators = new Map<string, { pluginId: string; creator: (leaf: WorkspaceLeaf) => View }>();
 const extensionViews = new Map<string, { pluginId: string; viewType: string }>();
 const postProcessors = new Map<string, MarkdownProcessorRegistration>();
+// Declared alongside the other registries so buildSnapshot() below can read it
+// at module init without hitting a temporal dead zone.
+const basesViewRegistrations: Record<string, BasesViewRegistration> = {};
 const iconRegistry = new Map<string, string>();
 const listeners = new Set<() => void>();
 let revision = 0;
@@ -87,6 +105,7 @@ function buildSnapshot(): PluginRuntimeSnapshot {
     ribbonItems: [...ribbonItems.values()],
     statusItems: [...statusItems.values()],
     settingTabs: [...settingTabs.values()],
+    basesViews: { ...basesViewRegistrations },
   };
 }
 
@@ -328,7 +347,7 @@ function installDomHelpers(): void {
   define(htmlProto, 'setCssStyles', function (this: HTMLElement, styles: Partial<CSSStyleDeclaration>) { Object.assign(this.style, styles); return this; });
   define(htmlProto, 'setCssProps', function (this: HTMLElement, props: Record<string, string>) { Object.entries(props).forEach(([name, value]) => this.style.setProperty(name, value)); return this; });
   define(htmlProto, 'innerWidth', { get(this: HTMLElement) { const style = getComputedStyle(this); return this.clientWidth - Number.parseFloat(style.paddingLeft || '0') - Number.parseFloat(style.paddingRight || '0'); } });
-  define(htmlProto, 'onWindowMigrated', function () { return () => {}; });
+  define(htmlProto, 'onWindowMigrated', function () { return () => { }; });
   define(htmlProto, 'trigger', function (this: HTMLElement, type: string) { this.dispatchEvent(new Event(type, { bubbles: true })); });
 
   define(eventProto, 'targetNode', { get(this: Event) { return this.target instanceof Node ? this.target : null; } });
@@ -417,12 +436,12 @@ export abstract class Component {
     el.addEventListener(type, callback, options);
     this.register(() => el.removeEventListener(type, callback, options));
   }
-  registerScope(_scope: unknown): void {}
+  registerScope(_scope: unknown): void { }
   registerInterval(id: number): number { this.register(() => window.clearInterval(id)); return id; }
   addChild<T extends Component>(child: T): T { this.children.push(child); if (this.loaded) child.load(); return child; }
   removeChild<T extends Component>(child: T): T { this.children = this.children.filter((item) => item !== child); child.unload(); return child; }
-  onload(): void {}
-  onunload(): void {}
+  onload(): void { }
+  onunload(): void { }
   load(): void {
     if (this.loaded) return;
     this.loaded = true;
@@ -554,7 +573,12 @@ export class Vault extends Events {
   async modify(file: TFile, data: string): Promise<void> {
     await api.write(file.path, data);
     this.trigger('modify', file);
-    sharedApp.metadataCache.trigger('changed', file, data, getFileCacheFromText(file, data));
+    // Parse locally so the cache (and 'changed' subscribers) see the new content
+    // immediately; the server reparse lands right after and stays authoritative.
+    const local = getFileCacheFromText(file, data);
+    sharedApp.metadataCache.primeFile(file.path, local);
+    sharedApp.metadataCache.trigger('changed', file, data, local);
+    void refreshMetadataCacheFor(file.path);
   }
   async modifyBinary(file: TFile, data: ArrayBuffer): Promise<void> {
     await api.writeBinary(file.path, data);
@@ -567,11 +591,20 @@ export class Vault extends Events {
     return next;
   }
   async delete(file: TAbstractFile): Promise<void> {
-    await api.remove(file.path);
+    await api.remove(file.path, 'permanent');
     await useStore.getState().loadTree();
     this.trigger('delete', file);
   }
-  async trash(file: TAbstractFile): Promise<void> { return this.delete(file); }
+  /**
+   * Obsidian's trash() is recoverable, unlike delete(). Both used to funnel into
+   * the same request, which meant the vault's deleteMode decided the semantics
+   * and trash() could delete permanently. Pin the mode explicitly instead.
+   */
+  async trash(file: TAbstractFile, _system = false): Promise<void> {
+    await api.remove(file.path, 'trash');
+    await useStore.getState().loadTree();
+    this.trigger('delete', file);
+  }
   async rename(file: TAbstractFile, newPath: string): Promise<void> {
     const oldPath = file.path;
     await api.rename(oldPath, normalizePath(newPath));
@@ -591,7 +624,7 @@ export class Vault extends Events {
 }
 
 class VaultAdapter {
-  constructor(private vault: Vault) {}
+  constructor(private vault: Vault) { }
   getName(): string { return this.vault.getName(); }
   getResourcePath(path: string): string { return api.rawUrl(path); }
   async exists(path: string): Promise<boolean> { return abstractFile(path) !== null; }
@@ -628,29 +661,202 @@ export class FileSystemAdapter {
 export class MetadataCache extends Events {
   resolvedLinks: Record<string, Record<string, number>> = {};
   unresolvedLinks: Record<string, Record<string, number>> = {};
+  /** Whole-vault cache mirrored from the server; see loadMetadataCache(). */
+  private caches = new Map<string, any>();
+
+  /** Replace the mirrored vault cache (initial load / full refresh). */
+  primeAll(
+    caches: Record<string, any>,
+    resolvedLinks: Record<string, Record<string, number>>,
+    unresolvedLinks: Record<string, Record<string, number>>,
+  ): void {
+    this.caches = new Map(Object.entries(caches));
+    this.resolvedLinks = resolvedLinks;
+    this.unresolvedLinks = unresolvedLinks;
+    this.trigger('resolved');
+  }
+
+  /** Update one file's entry after an edit, keeping the link maps consistent. */
+  primeFile(path: string, cache: any | null): void {
+    if (cache) this.caches.set(path, cache);
+    else this.caches.delete(path);
+    if (!cache) {
+      delete this.resolvedLinks[path];
+      delete this.unresolvedLinks[path];
+      return;
+    }
+    const resolved: Record<string, number> = {};
+    const unresolved: Record<string, number> = {};
+    const all = [...(cache.links ?? []), ...(cache.embeds ?? []), ...(cache.frontmatterLinks ?? [])];
+    for (const link of all) {
+      const dest = this.getFirstLinkpathDest(link.link, path);
+      if (dest) resolved[dest.path] = (resolved[dest.path] ?? 0) + 1;
+      else {
+        const key = String(link.link).split('#')[0].trim();
+        if (key) unresolved[key] = (unresolved[key] ?? 0) + 1;
+      }
+    }
+    this.resolvedLinks[path] = resolved;
+    this.unresolvedLinks[path] = unresolved;
+  }
+
   getFileCache(file: TFile): any {
-    if (file.path === useStore.getState().activePath) return getFileCacheFromText(file, useStore.getState().content);
-    return null;
+    return this.caches.get(file.path) ?? null;
   }
-  getCache(path: string): any { const file = abstractFile(path); return file instanceof TFile ? this.getFileCache(file) : null; }
-  getFirstLinkpathDest(linkpath: string, _sourcePath: string): TFile | null {
-    const clean = linkpath.split('#')[0].toLowerCase();
-    return sharedApp.vault.getFiles().find((file) => file.path.toLowerCase() === clean || file.basename.toLowerCase() === clean) ?? null;
+  getCache(path: string): any { return this.caches.get(normalizePath(path)) ?? null; }
+  getBacklinksForFile(file: TFile): { data: Map<string, any[]>; get(path: string): any[] | undefined } {
+    const data = new Map<string, any[]>();
+    for (const [source, targets] of Object.entries(this.resolvedLinks)) {
+      if (!targets[file.path] || source === file.path) continue;
+      const cache = this.caches.get(source);
+      if (!cache) continue;
+      const refs = [...(cache.links ?? []), ...(cache.embeds ?? []), ...(cache.frontmatterLinks ?? [])]
+        .filter((link: any) => this.getFirstLinkpathDest(link.link, source)?.path === file.path);
+      if (refs.length) data.set(source, refs);
+    }
+    return { data, get: (path: string) => data.get(path) };
   }
-  fileToLinktext(file: TFile, _sourcePath: string, omitMdExtension = false): string {
+  getTags(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const cache of this.caches.values()) {
+      for (const entry of cache.tags ?? []) out[entry.tag] = (out[entry.tag] ?? 0) + 1;
+    }
+    return out;
+  }
+  getFirstLinkpathDest(linkpath: string, sourcePath: string): TFile | null {
+    const clean = linkpath.split('#')[0].split('|')[0].trim();
+    if (!clean) return null;
+    const stripExt = (value: string) => value.replace(/\.(md|markdown)$/i, '').toLowerCase();
+    const wanted = stripExt(clean);
+    const files = sharedApp.vault.getFiles();
+    // Exact path first, then basename — and among basename matches prefer the one
+    // closest to the source file, mirroring Obsidian's shortest-path resolution.
+    const exact = files.find((file) => stripExt(file.path) === wanted || file.path.toLowerCase() === clean.toLowerCase());
+    if (exact) return exact;
+    const candidates = files.filter((file) => stripExt(file.name) === wanted);
+    if (!candidates.length) return null;
+    const sourceDir = sourcePath.includes('/') ? sourcePath.slice(0, sourcePath.lastIndexOf('/')) : '';
+    const shared = (file: TFile) => {
+      const a = sourceDir.split('/').filter(Boolean);
+      const b = file.path.split('/').slice(0, -1).filter(Boolean);
+      let n = 0;
+      while (n < a.length && n < b.length && a[n] === b[n]) n += 1;
+      return n;
+    };
+    return [...candidates].sort((a, b) => shared(b) - shared(a) || a.path.length - b.path.length)[0];
+  }
+  fileToLinktext(file: TFile, _sourcePath: string, omitMdExtension = true): string {
     return omitMdExtension && /^(md|markdown)$/i.test(file.extension) ? file.path.replace(/\.(md|markdown)$/i, '') : file.path;
   }
 }
 
+/**
+ * Local mirror of server/src/services/metacache.ts parseFileCache(). Used for the
+ * optimistic update right after a write so plugins never observe stale content.
+ * Positions are real objects: plugins read `position.start.line` unguarded.
+ */
 function getFileCacheFromText(_file: TFile, data: string): any {
-  const frontmatterRaw = data.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1];
-  let frontmatter: any;
-  try { frontmatter = frontmatterRaw ? parseYaml(frontmatterRaw) : undefined; } catch { frontmatter = undefined; }
-  const headings = [...data.matchAll(/^(#{1,6})\s+(.+?)\s*$/gm)].map((match) => ({ heading: match[2], level: match[1].length, position: null }));
-  const tags = [...data.matchAll(/(^|\s)(#[\p{L}\p{N}_/-]+)/gu)].map((match) => ({ tag: match[2], position: null }));
-  const links = [...data.matchAll(/(?<!!)\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g)].map((match) => ({ link: match[1].trim(), original: match[0], displayText: match[1].trim(), position: null }));
-  const embeds = [...data.matchAll(/!\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g)].map((match) => ({ link: match[1].trim(), original: match[0], displayText: match[1].trim(), position: null }));
-  return { frontmatter, headings, tags, links, embeds };
+  const starts = [0];
+  for (let i = 0; i < data.length; i += 1) if (data[i] === '\n') starts.push(i + 1);
+  const locAt = (offset: number) => {
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (starts[mid] <= offset) lo = mid; else hi = mid - 1;
+    }
+    return { line: lo, col: offset - starts[lo], offset };
+  };
+  const posAt = (start: number, end: number) => ({ start: locAt(start), end: locAt(end) });
+
+  const cache: any = { headings: [], tags: [], links: [], embeds: [], listItems: [], sections: [] };
+  const fm = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(data);
+  let firstLine = 0;
+  if (fm) {
+    cache.frontmatterPosition = posAt(0, fm[0].length);
+    cache.sections.push({ type: 'yaml', position: cache.frontmatterPosition });
+    try { cache.frontmatter = parseYaml(fm[1]) ?? undefined; } catch { cache.frontmatter = undefined; }
+    const fmTags = cache.frontmatter?.tags ?? cache.frontmatter?.tag;
+    const push = (value: unknown) => {
+      const text = String(value).trim();
+      if (text) cache.tags.push({ tag: text.startsWith('#') ? text : `#${text}`, position: cache.frontmatterPosition });
+    };
+    if (Array.isArray(fmTags)) fmTags.forEach(push);
+    else if (typeof fmTags === 'string') fmTags.split(/[,\s]+/).forEach(push);
+    firstLine = locAt(fm[0].length).line;
+  }
+
+  let inFence = false;
+  const listStack: { indent: number; line: number }[] = [];
+  for (let line = firstLine; line < starts.length; line += 1) {
+    const start = starts[line];
+    const end = line + 1 < starts.length ? starts[line + 1] - 1 : data.length;
+    const text = data.slice(start, end).replace(/\r$/, '');
+    if (/^[ \t]*(`{3,}|~{3,})/.test(text)) { inFence = !inFence; continue; }
+    if (inFence) continue;
+    if (!text.trim()) { listStack.length = 0; continue; }
+
+    const heading = /^(#{1,6})[ \t]+(.*?)[ \t]*$/.exec(text);
+    if (heading) {
+      cache.headings.push({
+        heading: heading[2].replace(/[ \t]+#+[ \t]*$/, '').trim(),
+        level: heading[1].length,
+        position: posAt(start, end),
+      });
+      listStack.length = 0;
+    } else {
+      const list = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+(?:\[([ xX/>\-?!*"lbin,pcSk])\][ \t]+)?/.exec(text);
+      if (list) {
+        const indent = list[1].replace(/\t/g, '    ').length;
+        while (listStack.length && listStack[listStack.length - 1].indent >= indent) listStack.pop();
+        const item: any = { position: posAt(start, end), parent: listStack.length ? listStack[listStack.length - 1].line : -1 - line };
+        if (list[2] !== undefined) item.task = list[2];
+        cache.listItems.push(item);
+        listStack.push({ indent, line });
+      }
+    }
+
+    const scan = text.replace(/`[^`\n]*`/g, (s) => ' '.repeat(s.length));
+    for (const m of scan.matchAll(/(!?)\[\[([^\]\n]+?)\]\]/g)) {
+      const [before, alias] = m[2].split('|');
+      const link = before.trim();
+      if (!link) continue;
+      const at = start + (m.index ?? 0);
+      const entry = {
+        link,
+        original: m[0],
+        displayText: (alias ?? link.split('#').pop() ?? link).trim() || link,
+        position: posAt(at, at + m[0].length),
+      };
+      (m[1] === '!' ? cache.embeds : cache.links).push(entry);
+    }
+    for (const m of scan.matchAll(/(?<![\w&])#([\p{L}\p{N}_/-]*[\p{L}_/-][\p{L}\p{N}_/-]*)/gu)) {
+      const at = start + (m.index ?? 0);
+      cache.tags.push({ tag: `#${m[1]}`, position: posAt(at, at + m[0].length) });
+    }
+  }
+  return cache;
+}
+
+/** Load the whole-vault metadata cache from the server into the shim. */
+export async function loadMetadataCache(): Promise<void> {
+  try {
+    const { caches, resolvedLinks, unresolvedLinks } = await api.metaCache();
+    sharedApp.metadataCache.primeAll(caches, resolvedLinks, unresolvedLinks);
+  } catch {
+    /* offline / unauthorized: plugins see an empty cache rather than crashing */
+  }
+}
+
+/** Refresh one file's cache entry from the server (post-write or fs event). */
+export async function refreshMetadataCacheFor(path: string): Promise<void> {
+  if (!/\.(md|markdown)$/i.test(path)) return;
+  try {
+    const { cache } = await api.metaCacheFor(path);
+    sharedApp.metadataCache.primeFile(path, cache);
+  } catch {
+    /* keep whatever we have */
+  }
 }
 
 // ---- Editor + workspace views --------------------------------------------
@@ -701,7 +907,7 @@ export class WorkspaceItem extends Events {
     return item;
   }
 }
-export class WorkspaceParent extends WorkspaceItem {}
+export class WorkspaceParent extends WorkspaceItem { }
 export class WorkspaceSplit extends WorkspaceParent {
   constructor(public region: 'main' | 'left' | 'right' = 'main') { super(); }
   get collapsed(): boolean {
@@ -749,14 +955,14 @@ export class WorkspaceLeaf extends WorkspaceItem {
     }
     changed();
   }
-  async loadIfDeferred(): Promise<void> {}
+  async loadIfDeferred(): Promise<void> { }
   get isDeferred(): boolean { return false; }
   getEphemeralState(): any { return {}; }
-  setEphemeralState(_state: any): void {}
-  togglePinned(): void {}
-  setPinned(_pinned: boolean): void {}
-  setGroupMember(_other: WorkspaceLeaf): void {}
-  setGroup(_group: string): void {}
+  setEphemeralState(_state: any): void { }
+  togglePinned(): void { }
+  setPinned(_pinned: boolean): void { }
+  setGroupMember(_other: WorkspaceLeaf): void { }
+  setGroup(_group: string): void { }
   detach(): void {
     const entry = [...activeViews].find(([, leaf]) => leaf === this);
     if (!entry) return;
@@ -788,10 +994,10 @@ export class View extends Component {
   getDisplayText(): string { return this.getViewType(); }
   getIcon(): string { return 'file'; }
   getState(): any { return {}; }
-  async setState(_state: any, _result: any): Promise<void> {}
-  async onOpen(): Promise<void> {}
+  async setState(_state: any, _result: any): Promise<void> { }
+  async onOpen(): Promise<void> { }
   async onClose(): Promise<void> { this.unload(); }
-  onResize(): void {}
+  onResize(): void { }
   get navigation(): boolean { return true; }
 }
 
@@ -820,7 +1026,7 @@ export class TextFileView extends FileView {
   clear(): void { this.data = ''; }
   async save(): Promise<void> { if (this.file) await sharedApp.vault.modify(this.file, this.getViewData()); }
   async onLoadFile(file: TFile): Promise<void> { this.file = file; this.setViewData(await sharedApp.vault.read(file), true); }
-  async onUnloadFile(_file: TFile): Promise<void> {}
+  async onUnloadFile(_file: TFile): Promise<void> { }
 }
 
 export class MarkdownView extends TextFileView {
@@ -828,7 +1034,7 @@ export class MarkdownView extends TextFileView {
   getViewType(): string { return 'markdown'; }
   getDisplayText(): string { return this.file?.basename ?? 'Markdown'; }
 }
-export class MarkdownPreviewView extends MarkdownView {}
+export class MarkdownPreviewView extends MarkdownView { }
 
 const PLUGIN_VIEW_PREFIX = 'plugin-view://';
 const activeViews = new Map<string, WorkspaceLeaf>();
@@ -923,7 +1129,7 @@ export class Workspace extends Events {
 }
 
 export class FileManager {
-  constructor(private app: App) {}
+  constructor(private app: App) { }
   async renameFile(file: TAbstractFile, newPath: string): Promise<void> { await this.app.vault.rename(file, newPath); }
   async trashFile(file: TAbstractFile): Promise<void> { await this.app.vault.trash(file); }
   generateMarkdownLink(file: TFile, _sourcePath: string, subpath = '', alias = ''): string {
@@ -990,8 +1196,8 @@ export class Modal {
   setContent(content: string | DocumentFragment): this { setNodeContent(this.contentEl, content); return this; }
   open(): void { getPluginUiHost().appendChild(this.containerEl); this.scope.activate(); this.onOpen(); }
   close(): void { this.onClose(); this.scope.deactivate(); this.containerEl.remove(); }
-  onOpen(): void {}
-  onClose(): void {}
+  onOpen(): void { }
+  onClose(): void { }
 }
 
 export abstract class PopoverSuggest<T> {
@@ -1098,7 +1304,7 @@ export abstract class EditorSuggest<T> extends PopoverSuggest<T> {
   context: any = null;
   limit = 100;
   constructor(app: App) { super(app); }
-  setInstructions(_instructions: any[]): void {}
+  setInstructions(_instructions: any[]): void { }
   abstract onTrigger(cursor: any, editor: Editor, file: TFile | null): any;
   abstract getSuggestions(context: any): T[] | Promise<T[]>;
 }
@@ -1129,11 +1335,11 @@ export class SuggestModal<T> extends Modal {
     this.inputEl.addEventListener('keydown', (event) => this.onKeyDown(event));
   }
   setPlaceholder(value: string): void { this.inputEl.placeholder = value; }
-  setInstructions(_instructions: any[]): void {}
+  setInstructions(_instructions: any[]): void { }
   getSuggestions(_query: string): T[] | Promise<T[]> { return []; }
   renderSuggestion(value: T, el: HTMLElement): void { el.textContent = this.getItemText(value); }
   getItemText(value: T): string { return String(value); }
-  onChooseSuggestion(_item: T, _evt: MouseEvent | KeyboardEvent): void {}
+  onChooseSuggestion(_item: T, _evt: MouseEvent | KeyboardEvent): void { }
   selectSuggestion(value: T, evt: MouseEvent | KeyboardEvent): void { this.onChooseSuggestion(value, evt); }
   override open(): void { super.open(); void this.refresh(); this.inputEl.focus(); }
   private onKeyDown(event: KeyboardEvent): void {
@@ -1187,7 +1393,7 @@ export class SuggestModal<T> extends Modal {
 export class FuzzySuggestModal<T> extends SuggestModal<T> {
   getItems(): T[] { return []; }
   override getSuggestions(query: string): T[] { const lower = query.toLowerCase(); return this.getItems().filter((item) => this.getItemText(item).toLowerCase().includes(lower)); }
-  onChooseItem(_item: T, _evt: MouseEvent | KeyboardEvent): void {}
+  onChooseItem(_item: T, _evt: MouseEvent | KeyboardEvent): void { }
   override onChooseSuggestion(item: T, evt: MouseEvent | KeyboardEvent): void { this.onChooseItem(item, evt); }
 }
 
@@ -1571,7 +1777,7 @@ export abstract class Plugin extends Component {
   manifest: any;
   constructor(app: App, manifest: any) { super(); this.app = app; this.manifest = manifest; }
   abstract onload(): void | Promise<void>;
-  onunload(): void {}
+  onunload(): void { }
   addCommand(command: any): any {
     const id = command.id.includes(':') ? command.id : `${this.manifest.id}:${command.id}`;
     const contribution = { id, pluginId: this.manifest.id, pluginName: this.manifest.name, name: command.name, command };
@@ -1641,10 +1847,13 @@ export abstract class Plugin extends Component {
     if (!viewId || typeof registration?.factory !== 'function') return false;
     if (basesViewRegistrations[viewId]) throw new Error(`Bases view already exists: ${viewId}`);
     basesViewRegistrations[viewId] = registration;
+    changed();
     this.register(() => {
-      if (basesViewRegistrations[viewId] === registration) delete basesViewRegistrations[viewId];
+      if (basesViewRegistrations[viewId] === registration) {
+        delete basesViewRegistrations[viewId];
+        changed();
+      }
     });
-    compatibilityWarning(this.manifest.id, 'Bases view registered; .base query/render hosting remains partial');
     return true;
   }
   registerEditorExtension(_extension: unknown): void { compatibilityWarning(this.manifest.id, 'CodeMirror editor extensions are not yet mounted'); }
@@ -1652,24 +1861,22 @@ export abstract class Plugin extends Component {
   registerCliHandler(_command: string, _description: string, _flags: unknown, _handler: AnyFn): void {
     compatibilityWarning(this.manifest.id, 'CLI handlers are unavailable in the web application');
   }
-  registerHoverLinkSource(_id: string, _info: unknown): void {}
-  registerObsidianProtocolHandler(_action: string, _handler: AnyFn): void {}
+  registerHoverLinkSource(_id: string, _info: unknown): void { }
+  registerObsidianProtocolHandler(_action: string, _handler: AnyFn): void { }
   async loadData(): Promise<any> { return (await api.getPluginData(this.manifest.id)).data; }
   async saveData(data: unknown): Promise<void> { await api.putPluginData(this.manifest.id, data); }
-  onUserEnable(): void {}
+  onUserEnable(): void { }
 }
 
 const pluginInstances: Record<string, Plugin> = {};
 const pluginManifests: Record<string, any> = {};
-const basesViewRegistrations: Record<string, any> = {};
-
 export class App {
   vault = new Vault();
   workspace = new Workspace();
   metadataCache = new MetadataCache();
   metadataTypeManager = {
     getAllProperties: () => ({} as Record<string, { type?: string }>),
-    setType: (_property: string, _type: string) => {},
+    setType: (_property: string, _type: string) => { },
   };
   fileManager = new FileManager(this);
   keymap = {};
@@ -1721,21 +1928,76 @@ export class App {
 export function addIcon(iconId: string, svgContent: string): void { iconRegistry.set(iconId, svgContent); }
 export function removeIcon(iconId: string): void { iconRegistry.delete(iconId); }
 const builtInIconIds = [
-  'alert-circle', 'arrow-left', 'arrow-right', 'bar-chart-3', 'bookmark', 'calendar', 'calendar-days', 'check',
-  'check-circle', 'chevron-down', 'chevron-left', 'chevron-right', 'chevron-up',
-  'check-square', 'circle', 'clock', 'columns-3', 'file', 'file-text', 'flag', 'folder', 'help-circle', 'image',
-  'info', 'link', 'list', 'menu', 'minus', 'minus-circle', 'more-horizontal',
-  'pause', 'pencil', 'play', 'plus', 'search', 'settings', 'square', 'star',
-  'tag', 'timer', 'trash', 'waypoints', 'x', 'x-circle',
+  'alert-circle', 'arrow-left', 'arrow-right', 'bar-chart-3', 'bell', 'bookmark', 'calendar', 'calendar-days',
+  'check', 'check-circle', 'check-square', 'chevron-down', 'chevron-left', 'chevron-right', 'chevron-up',
+  'circle', 'clipboard-copy', 'clock', 'columns-3', 'copy', 'eye', 'eye-off',
+  'file', 'file-text', 'flag', 'folder', 'help-circle', 'image',
+  'info', 'link', 'list', 'lucide-bell', 'lucide-repeat', 'menu', 'minus', 'minus-circle', 'more-horizontal',
+  'pause', 'pencil', 'play', 'plus', 'redo', 'repeat', 'refresh-cw', 'rotate-ccw',
+  'search', 'settings', 'square', 'star', 'strikethrough',
+  'tag', 'timer', 'timer-off', 'trash', 'undo', 'wand', 'wand-2', 'waypoints', 'x', 'x-circle',
 ];
 const builtInIconSvg: Record<string, string> = {
+  'alert-circle': '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+  'arrow-left': '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+  'arrow-right': '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  'bar-chart-3': '<path d="M3 3v18h18M18 17V9M13 17V5M8 17v-3"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  bookmark: '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/>',
   calendar: '<path d="M8 2v4M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
   'calendar-days': '<path d="M8 2v4M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  'check-circle': '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/>',
   'check-square': '<path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
-  list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  'chevron-down': '<path d="m6 9 6 6 6-6"/>',
+  'chevron-left': '<path d="m15 18-6-6 6-6"/>',
+  'chevron-right': '<path d="m9 18 6-6-6-6"/>',
+  'chevron-up': '<path d="m18 15-6-6-6 6"/>',
+  circle: '<circle cx="12" cy="12" r="10"/>',
+  'clipboard-copy': '<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/><path d="M16 4h2a2 2 0 0 1 2 2v4"/><path d="M21 14H11"/><path d="m15 10-4 4 4 4"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   'columns-3': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18M15 3v18"/>',
-  timer: '<path d="M10 2h4M12 14v-4M4 13a8 8 0 1 0 8-8 7.9 7.9 0 0 0-4.9 1.7L4 10"/>',
-  'bar-chart-3': '<path d="M3 3v18h18M18 17V9M13 17V5M8 17v-3"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  eye: '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>',
+  'eye-off': '<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
+  'file-text': '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
+  flag: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  'help-circle': '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" x2="12.01" y1="17" y2="17"/>',
+  image: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  'lucide-bell': '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  'lucide-repeat': '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+  menu: '<line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="18" y2="18"/>',
+  minus: '<path d="M5 12h14"/>',
+  'minus-circle': '<circle cx="12" cy="12" r="10"/><path d="M8 12h8"/>',
+  'more-horizontal': '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  pause: '<rect width="4" height="16" x="6" y="4"/><rect width="4" height="16" x="14" y="4"/>',
+  pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+  play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  redo: '<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/>',
+  repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+  'refresh-cw': '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  'rotate-ccw': '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+  star: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+  strikethrough: '<path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" x2="20" y1="12" y2="12"/>',
+  tag: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>',
+  timer: '<line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/>',
+  'timer-off': '<path d="M10 2h4"/><path d="M4.6 11a8 8 0 0 0 1.7 8.7 8 8 0 0 0 8.7 1.7"/><path d="M7.4 7.4a8 8 0 0 1 12.2 9.3"/><path d="m2 2 20 20"/><path d="M12 12v-2"/>',
+  trash: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
+  undo: '<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>',
+  wand: '<path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8 19 13"/><path d="M15 9h.01"/><path d="M17.8 6.2 19 5"/><path d="m3 21 9-9"/><path d="M12.2 6.2 11 5"/>',
+  'wand-2': '<path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/>',
+  waypoints: '<circle cx="12" cy="4.5" r="2.5"/><path d="m10.2 6.3-3.9 3.9"/><circle cx="4.5" cy="12" r="2.5"/><path d="M7 12h10"/><circle cx="19.5" cy="12" r="2.5"/><path d="m13.8 17.7 3.9-3.9"/><circle cx="12" cy="19.5" r="2.5"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  'x-circle': '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
 };
 export function getIconIds(): string[] { return [...new Set([...builtInIconIds, ...iconRegistry.keys()])]; }
 export function getIcon(iconId: string): SVGSVGElement | null {
@@ -1746,6 +2008,10 @@ export function getIcon(iconId: string): SVGSVGElement | null {
   svg.setAttribute('height', '18');
   svg.setAttribute('fill', 'none');
   svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.classList.add('svg-icon');
   svg.innerHTML = registered ?? builtInIconSvg[iconId] ?? '<circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/>';
   return svg;
 }
@@ -1981,15 +2247,21 @@ export async function requestUrl(params: string | any): Promise<any> {
 }
 export async function request(params: string | any): Promise<string> { return (await requestUrl(params)).text; }
 
+const shell = detectNativeShell();
+
 const Platform = {
-  isDesktop: !matchMedia('(max-width: 700px)').matches,
-  isMobile: matchMedia('(max-width: 700px)').matches,
-  isDesktopApp: false,
-  isMobileApp: false,
+  // Uses the same breakpoint as the rest of the app (`useIsMobile`). This used
+  // to hardcode 700px while the UI switched to its mobile layout at 768px, so
+  // plugins were told "desktop" on a 701-768px viewport that was in fact
+  // rendering the phone layout.
+  isDesktop: !isMobileViewport(),
+  isMobile: isMobileViewport(),
+  isDesktopApp: shell === 'desktop',
+  isMobileApp: shell === 'mobile',
   isIosApp: /iPad|iPhone|iPod/.test(navigator.userAgent),
   isAndroidApp: /Android/.test(navigator.userAgent),
-  isPhone: matchMedia('(max-width: 700px)').matches,
-  isTablet: matchMedia('(min-width: 701px) and (max-width: 1100px)').matches,
+  isPhone: isMobileViewport(),
+  isTablet: matchMedia(TABLET_QUERY).matches,
   isMacOS: /Mac/.test(navigator.platform),
   isWin: /Win/.test(navigator.platform),
   isLinux: /Linux/.test(navigator.platform),
@@ -2124,7 +2396,8 @@ async function loadPlugin(id: string, manifest: any, bustCache = false): Promise
       document.head.appendChild(style);
     }
     loaded.set(id, { instance: pluginInstance, style });
-    queueMicrotask(() => sharedApp.metadataCache.trigger('resolved'));
+    // 'resolved' is fired by the metadata cache itself once link resolution is
+    // actually available (primeAll), not once per plugin load.
     setPluginState({ id, name: manifest.name, status: 'loaded', loadedAt: Date.now() });
     console.info(`[plugin] loaded ${id}`);
   } catch (error: any) {
@@ -2177,6 +2450,10 @@ export function getPluginApp(): App { return sharedApp; }
 /** Load all enabled plugins. Failed plugins remain visible with diagnostics. */
 export async function loadPlugins(): Promise<void> {
   initializePluginRuntime();
+  // Prime the metadata cache before any plugin runs: onload() handlers commonly
+  // scan the vault via getFileCache(), and an empty cache there means the plugin
+  // silently starts up with no data.
+  await loadMetadataCache();
   const { plugins } = await api.listPlugins();
   const enabledIds = new Set(plugins.filter((plugin: any) => plugin.enabled).map((plugin: any) => plugin.id));
   for (const id of [...loaded.keys()]) if (!enabledIds.has(id)) await unloadPlugin(id);
@@ -2206,6 +2483,21 @@ export async function disablePlugin(id: string): Promise<boolean> {
   await unloadPlugin(id);
   const current = pluginStates.get(id);
   setPluginState({ id, name: current?.name ?? id, status: 'disabled' });
+  if (reloadRequired) window.location.reload();
+  return reloadRequired;
+}
+
+/**
+ * Uninstall in a single server call. Deliberately does NOT disable first: the
+ * server already drops the plugin from `enabled` and `installed` and deletes
+ * its folder atomically, so a separate disable would leave the plugin disabled
+ * but still installed whenever the uninstall request then failed.
+ */
+export async function uninstallPlugin(id: string): Promise<boolean> {
+  const { reloadRequired } = await api.uninstallPlugin(id);
+  await unloadPlugin(id);
+  pluginStates.delete(id);
+  changed();
   if (reloadRequired) window.location.reload();
   return reloadRequired;
 }
@@ -2279,5 +2571,15 @@ export function handlePluginFilesystemEvent(event: string, path: string): void {
   if (event === 'unlink' || event === 'unlinkDir') sharedApp.vault.trigger('delete', file);
   else if (event === 'add' || event === 'addDir') sharedApp.vault.trigger('create', file);
   else sharedApp.vault.trigger('modify', file);
-  if (file instanceof TFile && /\.(md|markdown)$/i.test(file.path)) sharedApp.metadataCache.trigger('changed', file, '', null);
+  if (!(file instanceof TFile) || !/\.(md|markdown)$/i.test(file.path)) return;
+  if (event === 'unlink') {
+    sharedApp.metadataCache.primeFile(file.path, null);
+    sharedApp.metadataCache.trigger('deleted', file, null);
+    return;
+  }
+  // Fetch the reparsed entry before notifying: firing 'changed' with a null cache
+  // (the old behaviour) made subscribers treat the file as having no metadata.
+  void refreshMetadataCacheFor(file.path).then(() => {
+    sharedApp.metadataCache.trigger('changed', file, '', sharedApp.metadataCache.getFileCache(file));
+  });
 }

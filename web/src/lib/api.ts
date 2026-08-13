@@ -33,6 +33,24 @@ export interface ShareRecord {
   hasPassword?: boolean;
 }
 
+/** Mirrors server/src/services/metacache.ts — the Obsidian getFileCache() shape. */
+export interface ObsidianPos {
+  start: { line: number; col: number; offset: number };
+  end: { line: number; col: number; offset: number };
+}
+
+export interface ObsidianFileCache {
+  frontmatter?: Record<string, unknown>;
+  frontmatterPosition?: ObsidianPos;
+  frontmatterLinks?: { link: string; original: string; displayText: string; position: ObsidianPos }[];
+  headings: { heading: string; level: number; position: ObsidianPos }[];
+  tags: { tag: string; position: ObsidianPos }[];
+  links: { link: string; original: string; displayText: string; position: ObsidianPos }[];
+  embeds: { link: string; original: string; displayText: string; position: ObsidianPos }[];
+  listItems: { position: ObsidianPos; parent: number; task?: string; id?: string }[];
+  sections: { type: string; position: ObsidianPos }[];
+}
+
 export interface SearchHit {
   path: string;
   title: string;
@@ -191,9 +209,9 @@ export const api = {
     req<{ ok: true }>('/api/files/rename', { method: 'PATCH', body: JSON.stringify({ from, to }) }),
   copy: (from: string, to: string) =>
     req<{ ok: true }>('/api/files/copy', { method: 'POST', body: JSON.stringify({ from, to }) }),
-  remove: (path: string) =>
+  remove: (path: string, mode?: 'trash' | 'permanent') =>
     req<{ ok: true; trashed?: string; deleted?: string }>(
-      `/api/files/?path=${encodeURIComponent(path)}`,
+      `/api/files/?path=${encodeURIComponent(path)}${mode ? `&mode=${mode}` : ''}`,
       { method: 'DELETE' },
     ),
   // trash (FR-1)
@@ -243,6 +261,17 @@ export const api = {
       body: JSON.stringify({ query, paths, matchCase, phrase }),
     }),
   tags: () => req<{ tags: { tag: string; count: number }[] }>('/api/tags'),
+  // Obsidian metadata cache: whole vault, or one note when `path` is given.
+  metaCache: () =>
+    req<{
+      caches: Record<string, ObsidianFileCache>;
+      resolvedLinks: Record<string, Record<string, number>>;
+      unresolvedLinks: Record<string, Record<string, number>>;
+    }>('/api/metacache'),
+  metaCacheFor: (path: string) =>
+    req<{ path: string; cache: ObsidianFileCache | null }>(
+      `/api/metacache?path=${encodeURIComponent(path)}`,
+    ),
   properties: () =>
     req<{ properties: { key: string; type: string; count: number }[] }>('/api/properties'),
   propertyTypes: () => req<{ types: Record<string, string> }>('/api/property-types'),
@@ -262,12 +291,14 @@ export const api = {
     }>('/api/graph'),
   reindex: () => req<{ ok: true }>('/api/reindex', { method: 'POST' }),
 
-  // ui state (workspace persistence, shared across browsers)
-  getUiState: () => req<any>('/api/uistate/'),
-  putUiState: (state: any, clientId: string) =>
+  // UI state is namespaced per browser/app installation, never per vault.
+  getUiState: (workspaceId: string) => req<any>('/api/uistate/', {
+    headers: { 'X-Workspace-Id': workspaceId },
+  }),
+  putUiState: (state: any, clientId: string, workspaceId: string) =>
     req<{ ok: true }>('/api/uistate/', {
       method: 'PUT',
-      headers: { 'X-Client-Id': clientId },
+      headers: { 'X-Client-Id': clientId, 'X-Workspace-Id': workspaceId },
       body: JSON.stringify(state),
     }),
 

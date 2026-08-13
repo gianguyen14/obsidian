@@ -4,7 +4,7 @@
 > Quy ước: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong.
 > Cập nhật file này **mỗi khi** một mục thay đổi trạng thái.
 
-Cập nhật lần cuối: 2026-06-27 (security fix — chặn leo thang quyền token share; merge fix F-03 rate-limit, giữ `trust proxy` mặc định bật)
+Cập nhật lần cuối: 2026-08-11 (Phase 34 — desktop Electron full web parity, thay Compose Desktop thiếu tính năng)
 
 ---
 
@@ -70,6 +70,12 @@ Cập nhật lần cuối: 2026-06-27 (security fix — chặn leo thang quyền
   ribbon/status, settings, custom view, Markdown processor, data.json)
 - [x] M8.3 CSP-safe CommonJS module loader + live enable/disable/reload + diagnostics
 - [x] M8.4 Browse + install từ community (GitHub releases)
+- [x] M8.5 Metadata cache toàn vault (`GET /api/search/metacache`) + prime trước khi load plugin;
+  `resolvedLinks`/`unresolvedLinks` dựng từ cùng nguồn
+- [x] M8.6 Bases runtime: expression evaluator (`filters`/`formulas`/`sort`/`groupBy`) + host view type
+  do plugin đăng ký qua `registerBasesView` (fallback danh sách phẳng khi không có ai đăng ký)
+- [x] M8.7 Uninstall plugin gỡ hẳn: client gọi đúng 1 request `DELETE /api/plugins/{id}` (không disable
+  trước), báo lỗi ra UI khi request hỏng; pin `@types/express` cho `@types/multer` để `npm run build` chạy lại
 
 ## Phase 9 — Web frontend — FR-2
 - [x] M9.1 API client + auth flow + app shell (ribbon/sidebar/tabs/statusbar)
@@ -139,7 +145,8 @@ Cập nhật lần cuối: 2026-06-27 (security fix — chặn leo thang quyền
 ---
 
 ## Phase 15 — Persist & sync workspace state (theo yêu cầu người dùng)
-- [x] M15.1 Lưu UI/workspace state **xuống file server** `data/uistate.json` (không dùng localStorage)
+- [x] M15.1 Lưu UI/workspace state xuống file server (được Phase 35 migration từ một file chung sang
+      `data/uistate/{workspaceId}.json` riêng mỗi browser/app profile)
       — tab đang mở, note active, viewMode, folder mở, split, recent, bookmarks, layout panel
 - [x] M15.2 Khôi phục state khi load (F5 không mất note; mở trình duyệt/thiết bị khác vẫn giữ)
 - [x] M15.3 **Sync real-time** giữa các tab/thiết bị qua WebSocket: tab này đổi → broadcast →
@@ -430,7 +437,225 @@ Cập nhật lần cuối: 2026-06-27 (security fix — chặn leo thang quyền
       bundle desktop. Root scripts `desktop`/`desktop:dist`/`desktop:publish`; `.gitignore` thêm `desktop/.gen`,
       `desktop/release`.
 
+## Phase 31 — Desktop chuyển sang remote client — FR-13 viết lại, PRD 1.8 (theo yêu cầu người dùng)
+> Bối cảnh: người dùng host tại `https://obsidian.tuong.me` và muốn app dùng **chung vault trên server đó**.
+> Kiến trúc nhúng server của Phase 27 tạo ra **vault thứ hai** trên máy → mâu thuẫn mục tiêu, phải bỏ.
+> Điểm mấu chốt: load SPA **thẳng từ origin server** ⇒ same-origin ⇒ **không phải sửa `web/src/lib/api.ts`**.
+- [x] M31.1 PRD 1.8: viết lại FR-13 (remote client) + thêm FR-14 (Android) + ghi nhận **mất năng lực vault
+      cục bộ/offline** có chủ đích; ghi chú mô hình một-chủ-sở-hữu (`sessionVersion` bump = logout mọi thiết bị;
+      rate-limit login dùng chung bucket sau proxy — chấp nhận, không sửa vì sẽ tái tạo lỗ hổng F-03).
+- [x] M31.2 `desktop/src/main.ts`: **xoá** toàn bộ phần server nhúng — `serverEntry`/`freePort`/`augmentedPath`/
+      `startServer`/`waitForHealth`/`delay`/`baseUrl(port)`/`DATA_DIR`/`LOG_FILE`, `ensureVault`/`pickVaultDialog`/
+      `switchVault`, và `apiRequest`/`tokenFromSetCookie`/`autoLogin` (SPA tự có `Login.tsx`; cookie `httpOnly`
+      được Electron lưu bền ⇒ **không cần `safeStorage`, không lưu token ở tầng native**).
+- [x] M31.3 `DesktopConfig` mới `{ serverUrl }`; lần chạy đầu prompt nhập URL (mặc định `https://obsidian.tuong.me`),
+      validate chỉ `https:` (ngoại lệ `http:` cho loopback để test), từ chối URL có credential nhúng.
+      **`isInternalUrl()` rebase sang `new URL(cfg.serverUrl).origin`** — chỗ quan trọng nhất về bảo mật:
+      sai thì cửa sổ app thành trình duyệt tự do. Màn hình lỗi có Retry + Change Server khi không kết nối được.
+- [x] M31.4 Menu: bỏ Switch Vault / Open Vault·Data·Logs; thêm **File → Change Server…** (relaunch) và
+      **File → Sign Out** (xoá cookie của origin rồi reload).
+- [x] M31.5 Build/CI: `scripts/build.mjs` bỏ bước esbuild bundle server (chỉ còn main+preload);
+      `desktop/package.json` bỏ `build.extraResources`; root scripts `desktop`/`desktop:dist` không cần
+      `npm run build` web+server nữa; `release.yml` bỏ bước build server/web.
+- [x] M31.6 `web/`: thống nhất ngưỡng mobile — `plugins.ts` hardcode `max-width: 700px` trong khi
+      `useIsMobile.ts` dùng 768px ⇒ plugin nhận sai `isMobile` ở dải 701–768px (lộ rõ trên điện thoại thật).
+      Dùng chung một hằng số; `isMobileApp` cho native shell set qua global inject, mặc định `false`. + vitest.
+- [x] M31.7 Test hồi quy `server/test/` (theo mẫu `security.integration.test.ts`): **không** phát header CORS
+      cho origin lạ ở production (test phòng thủ — ai nới CORS sau này sẽ thấy đỏ); SPA fallback serve
+      `index.html` cho deep link; WS upgrade chấp nhận cookie. + thêm script `test` cho `web/` và cho root
+      `npm test` chạy cả 2 workspace (hiện các file vitest **không** nằm trong lần chạy tổng nào).
+
+## Phase 32 — Mobile app Android (Capacitor) — FR-14, PRD 1.8 (theo yêu cầu người dùng)
+- [x] M32.1 Workspace `mobile/`: `@capacitor/core`+`cli`+`android` 8.5.0; `capacitor.config.ts` với
+      `server.url = https://obsidian.tuong.me`, `androidScheme: 'https'` (giữ same-origin, APK nhỏ vì không
+      đóng gói asset SPA); `webDir` stub chỉ chứa màn hình "đang kết nối / lỗi mạng" (Capacitor bắt buộc có
+      `webDir`; đóng vai trò fallback). **Không** `allowNavigation` rộng, **không** service worker — đúng hai
+      thứ gây lỗi bridge-injection đã biết với `server.url`, dự án không dính cái nào.
+- [x] M32.2 `npx cap add android` scaffold Gradle project. (Làm được ngay, không cần SDK.)
+- [x] M32.3 **XONG (2026-08-07) — hoá ra không cần `sudo`**: JDK 21 đã có sẵn (`java-21-openjdk-amd64`);
+      `sdkmanager` đã có sẵn từ apt. Chỉ cần `--sdk_root=$HOME/Android/Sdk` để ghi vào thư mục user thay vì
+      `/usr/lib/android-sdk` (root sở hữu — đây chính là lỗi "Failed to read or create install properties file").
+      **Đính chính 2 lỗi trong hướng dẫn ban đầu**: (a) phải là `android-36`/`build-tools;36.0.0`, không phải 35 —
+      `variables.gradle` đặt `compileSdkVersion = 36`; (b) `JAVA_HOME` phải trỏ JDK **21**, vì `java` mặc định
+      của máy là 25 mà Gradle 8.14.3 chưa hỗ trợ. `./gradlew assembleDebug` **BUILD SUCCESSFUL in 3m38s**
+      → `app-debug.apk` 4.0MB, verify bằng `aapt2 dump badging`: `com.xnohat.webobsidian`, minSdk 24,
+      targetSdk 36, chỉ xin quyền `INTERNET`; `assets/capacitor.config.json` trong APK có đúng
+      `server.url = https://obsidian.tuong.me` + `androidScheme: https`. Chưa chạy emulator.
+- [ ] M32.4 **CHẶN — chỉ người dùng làm được**: smoke test cả 2 app với `https://obsidian.tuong.me` thật
+      (domain không resolve từ máy dev nên mọi kiểm thử ở đây chạy với server local `localhost:8787`).
+- [ ] M32.5 **KHÔNG THỂ trên máy này**: iOS (cần macOS + Xcode) — ngoài phạm vi, đã ghi vào PRD non-goals.
+- [ ] M32.7 (hoãn) base-URL + `Authorization: Bearer` + `?token=` cho WS + CORS allow-list. **Chỉ** cần khi
+      bundle asset SPA vào APK hoặc thêm offline cache. Phải làm **trọn gói** — làm nửa vời sẽ hỏng
+      `rawUrl()` trong `<img>/<video>/<audio> src` (Bearer header không dùng được cho element `src`).
+
+## Phase 33 — Desktop + Android native, không WebView — PRD 1.9
+> Phase này thay đường phát hành Phase 31/32. Launcher Electron/Capacitor cũ đã bị xoá khỏi source và
+> không còn trong npm workspace, package-lock, root scripts hay release CI.
+- [x] M33.1 Tạo `native-client/` Compose Multiplatform 1.11.0: dùng chung Kotlin/UI/state cho Android và
+      JVM desktop; Android `ComponentActivity`, desktop Compose Window/Skia; tuyệt đối không tải HTML/SPA.
+- [x] M33.2 Ktor native API client (OkHttp Android, CIO desktop): validate base URL HTTPS (HTTP chỉ loopback),
+      cookie `webobsidian_token` bền qua lần mở app, báo lỗi server/status rõ, logout xoá session.
+- [x] M33.3 Auth native: password + TOTP/recovery code; tự kiểm tra session đã lưu qua `/auth/me`.
+- [x] M33.4 Vault native v1: cây file, full-text search, mở text note, editor source, save + autosave 900ms,
+      layout adaptive (desktop 2 cột; mobile list/editor), refresh và trạng thái loading/error.
+- [x] M33.5 Build/release: Gradle wrapper 8.14.3, Kotlin 2.2.20, Android SDK 36 minSdk 24; `.dmg`/`.msi`/
+      `.deb` + APK; CI test/compile cả desktop và Android; release matrix bỏ Electron Builder/Capacitor.
+- [x] M33.6 Kiểm chứng local: `desktopTest` + `compileKotlinDesktop` thành công; `assembleDebug` thành công,
+      APK 13,529,823 byte, package `com.xnohat.webobsidian` v0.2.0, min 24/target 36; rà archive không có
+      Capacitor/Cordova/WebView/index.html (chỉ có `PublicSuffixDatabase.list` của HTTP client).
+- [ ] M33.7 Parity native tiếp theo (không chặn chuyển kiến trúc): passkey OS, Markdown reading/live preview,
+      create/rename/delete/upload, media, Graph/Canvas/Excalidraw, websocket live sync và plugin không phụ
+      thuộc DOM. Không dùng WebView làm fallback cho bất kỳ mục nào.
+
+## Phase 34 — Desktop Electron full web parity — PRD 2.0
+> Phản hồi thực tế: Compose Desktop chỉ có tree/search/source editor, thiếu hầu hết tính năng và không giống
+> bản web. Thay vì port lại hàng chục subsystem, desktop phải chạy nguyên web app bằng Electron.
+- [x] M34.1 Khôi phục workspace `desktop/` Electron 43 + electron-builder; root `desktop*` scripts và
+      package-lock quay lại Electron, Compose không còn là đường build desktop.
+- [x] M34.2 Remote client `BrowserWindow` tải configured server origin; prompt URL lần đầu, env override
+      `WEBOBSIDIAN_SERVER_URL`, Change Server, Sign Out, Retry và single-instance lock.
+- [x] M34.3 Security boundary: context isolation + sandbox, không Node integration, navigation same-origin,
+      external links qua system browser, validate HTTPS/loopback và không nhận embedded credentials.
+- [x] M34.4 Preload chỉ inject platform flags để web/plugin runtime nhận đúng `isDesktopApp`; toàn bộ UI và
+      chức năng còn lại dùng nguyên bundle React/CSS đang chạy trên server.
+- [x] M34.5 CI/release chuyển từ Gradle desktop sang npm/electron-builder trên macOS/Windows/Linux; artifact
+      dmg/zip, NSIS/portable, AppImage/deb đa kiến trúc.
+- [x] M34.5b Verify thật Linux x64: unpacked app tạo executable `webobsidian`; packaged app qua DevTools có
+      title `WebObsidian`, URL `http://localhost:8787/`; `.deb` 90,766,788 byte có đúng binary + desktop file.
+      Toàn bộ npm test (4 server + 61 web + 4 desktop), typecheck và Electron build đều pass.
+- [x] M34.5c Sửa race condition lần chạy đầu: đóng prompt sau Connect từng phát `window-all-closed` và làm
+      Linux/Windows quit trước khi main window được tạo. Thêm bootstrapping guard và smoke test khép kín
+      xác nhận Connect giữ process sống, mở URL đã chọn và lưu `desktop-config.json`; phát hành desktop 0.2.2.
+- [ ] M34.6 Mobile parity: Electron không hỗ trợ Android/iOS. Compose Android hiện vẫn là client native MVP;
+      cần quyết định riêng giữa tiếp tục port native hoặc chấp nhận Capacitor/WebView để dùng nguyên web UI.
+
+## Phase 35 — Workspace độc lập + Git-only vault sync — PRD 2.1
+- [x] M35.1 Namespace UI state bằng `workspaceId` bền theo browser/app profile; API bắt buộc header
+      `X-Workspace-Id`, lưu file riêng và chỉ nhận WebSocket uistate cùng namespace.
+- [x] M35.2 Electron local-first: bỏ server URL/prompt Connect, spawn Express bundle trên loopback, chọn
+      vault cục bộ, data/auth/index/log riêng từng installation và auto-login bằng secret cục bộ.
+- [x] M35.3 Giữ full web parity: Electron đóng gói đúng SPA hiện tại cùng backend; navigation sandbox chỉ
+      cho origin loopback, link ngoài qua system browser.
+- [x] M35.4 Git là đường đồng bộ vault duy nhất giữa hosted web và desktop: mỗi bên cấu hình Git remote/PAT
+      riêng trong Settings; không chia sẻ trực tiếp vault, cookie, settings hoặc workspace.
+- [x] M35.5 Regression: integration test chứng minh workspace A/B trên cùng backend không thấy state nhau;
+      smoke test đặt remote URL giả nhưng Electron vẫn mở backend/vault loopback riêng.
+- [ ] M35.6 Android local vault + Git transport native: Compose Android hiện giữ note đang mở cục bộ nhưng
+      vẫn là REST client của một server; cần port filesystem/Git native để đạt Git-only vault sync hoàn toàn.
+
 ### Nhật ký tiến độ
+- 2026-08-12 (Phase 35 — workspace độc lập/local-first): phản hồi thực tế cho thấy `uistate.json` + broadcast
+  chung khiến mở note trên web điều khiển desktop. Tách state bằng workspace id, đồng thời bỏ kiến trúc
+  Electron remote client: desktop 0.3.0 lại sở hữu server/vault local và chỉ đồng bộ file qua Git remote.
+- 2026-08-11 (Phase 34 — Electron full web parity): sau smoke test Compose cho thấy UI/tính năng thiếu xa
+  bản web, desktop chuyển lại Electron remote client. Electron tải nguyên origin server nên không còn hai
+  implementation UI lệch nhau; CI/release và tài liệu đã chuyển lại electron-builder. Mobile tách thành
+  quyết định riêng vì Electron không có target Android/iOS.
+- 2026-08-11 (Phase 33 — native không WebView): thay đường build desktop/mobile bằng Compose Multiplatform.
+  Client gọi REST trực tiếp qua Ktor, giữ cookie session ở storage riêng từng nền tảng; UI native đã có
+  connect, password/TOTP, tree, search, editor và autosave. `package.json`/package-lock không còn Electron
+  hoặc Capacitor; CI/release dùng Gradle. Test desktop và compile thành công; APK Android native build thật
+  thành công, `aapt2` xác nhận đúng application id/SDK và archive không chứa HTML/WebView runtime.
+- 2026-08-07 (Phase 31 + M32.1/M32.2 — App desktop & Android dạng remote client, PRD 1.8):
+  **Quyết định kiến trúc quan trọng nhất: load SPA thẳng từ origin của server.** Dự tính ban đầu là phải
+  thêm base-URL + `Authorization: Bearer` cho ~70 call site trong `web/src/lib/api.ts`. Kiểm chứng lại thì
+  **không cần**: server đã tự serve SPA (`server/src/index.ts:120-125` — `express.static` + SPA fallback),
+  nên nếu cả hai app load thẳng từ `https://obsidian.tuong.me` thì document origin *chính là* origin server
+  → cookie `httpOnly` first-party, WS upgrade tự mang cookie, không có request cross-origin nào. Lý lẽ quyết
+  định: `api.rawUrl()` được nhét vào `src` của `<img>/<video>/<audio>`, mà **header Bearer không thể** xác
+  thực cho element `src` — chỉ same-origin mới chạy. Refactor đó ghi thành **M32.7 (hoãn)**, chỉ bắt buộc khi
+  bundle asset vào APK hoặc thêm offline cache, và phải làm trọn gói. Giá phải trả: app bắt buộc online —
+  đúng với quyết định "không offline ở v1". Cũng đính chính 2 giả định sai: `api.uploadUrl()` là dead code
+  (không consumer nào trong `web/src`), và passkey **không** bị chặn với native client vì vẫn là origin https thật.
+  **Desktop (M31.2-M31.5)**: xoá toàn bộ phần server nhúng khỏi `desktop/src/main.ts` — `serverEntry`/
+  `freePort`/`augmentedPath`/`startServer`/`waitForHealth`/`baseUrl`/`ensureVault`/`pickVaultDialog`/
+  `switchVault`/`apiRequest`/`tokenFromSetCookie`/`autoLogin`. Không cần `safeStorage`: cookie `httpOnly`
+  được Electron lưu bền qua các lần khởi động. `DesktopConfig` giờ chỉ `{ serverUrl }`; cổng bảo mật nằm ở
+  `desktop/src/serverUrl.ts` (tách riêng, không phụ thuộc electron nên test được): chỉ chấp nhận `https:`,
+  ngoại lệ `http:` cho loopback, từ chối URL có `username`/`password`. `isInternalUrl()` rebase sang
+  `new URL(cfg.serverUrl).origin` — **chỗ sửa quan trọng nhất về bảo mật**, sai là cửa sổ app thành trình
+  duyệt tự do. Màn hình nhập URL dùng `data:` URL với `sandbox: true`, không preload, đọc kết quả qua
+  `page-title-updated` (không mở kênh IPC nào cho trang không tin cậy).
+  **Kiểm chứng thật, không chỉ typecheck**: 2 harness Electron chạy với server Docker thật ở 8787 →
+  `RESULT_URL: http://localhost:8787/`, `__webobsidianShell: "desktop"` tới được SPA, màn hình Login thật
+  render; với server không tới được thì hiện màn hình lỗi "Can't reach your server …" có đủ **Retry** và
+  **Change Server…** chứ không trắng màn hình.
+  **M31.6 (bug thật trong `web/`)**: `plugins.ts` hardcode `max-width: 700px` trong khi `useIsMobile.ts` dùng
+  768px → plugin bị báo "desktop" ở dải 701-768px trong khi UI đã chuyển sang layout điện thoại. Nay dùng
+  chung hằng số `MOBILE_QUERY`/`TABLET_QUERY`, thêm `detectNativeShell()` (`web/src/lib/nativeShell.ts`) cho
+  `isDesktopApp`/`isMobileApp`, và sửa nốt `@media (max-width: 700px)` còn sót trong `obsidian.css`.
+  **Bằng chứng mutation test cho từng test mới** (test không bắt được bug là test vô dụng): revert ngưỡng
+  700px → 4 test đỏ; mở toang CORS ở production → test mới đỏ trong khi test bảo mật *cũ* vẫn xanh (chứng minh
+  nó bịt một lỗ hổng thật, không trùng lặp); tắt auth WS → test mới đỏ.
+  **Bật web/desktop test vào `npm test` gốc làm lộ 2 lỗi test có sẵn**, đã sửa đúng chỗ thay vì loại trừ:
+  (1) happy-dom trong bản đang cài **không có `localStorage`**, mà `saveLocalStorage`/`loadLocalStorage` nuốt
+  lỗi storage theo thiết kế nên trông như bug sản phẩm → polyfill in-memory ở `web/test/setup.ts`;
+  (2) `BasesPluginView.test.tsx` là **bom hẹn giờ** — assert `due: '2026-08-08'` trừ `today()` bằng 2, viết
+  ngày 2026-08-06 nên hỏng khi sang 08-07 → đóng băng đồng hồ bằng `vi.setSystemTime`.
+  Kết quả cuối: `npm run typecheck`, `npm run build`, `npm test` đều exit 0 (4 server + 61 web + 7 desktop).
+  **M32.1/M32.2**: workspace `mobile/` với Capacitor 8.5.0, `server.url` + `androidScheme: 'https'`,
+  `webDir: 'www'` là màn hình fallback, **không** cấu hình `allowNavigation` rộng; `npx cap add android` đã
+  scaffold xong project Gradle. Ghi nhận có ý thức: doc Capacitor nói `server.url` "not intended for
+  production" — lý do họ nêu là bị app store từ chối (Apple 4.7.1), không áp dụng cho APK sideload self-hosted.
+  **M32.3 — đính chính hướng dẫn tôi đưa ra ban đầu là SAI ở 2 chỗ.** Người dùng chạy `sdkmanager` và gặp
+  `Warning: Failed to read or create install properties file`. Nguyên nhân: `ANDROID_HOME` rỗng nên sdkmanager
+  suy ra SDK root từ vị trí binary = `/usr/lib/android-sdk` (root sở hữu, uid 1000 không ghi được). Sửa bằng
+  `sudo` là sai hướng — SDK sẽ thuộc root rồi Gradle chạy dưới user lại vướng tiếp; đúng là
+  `--sdk_root=$HOME/Android/Sdk`. Hai lỗi trong hướng dẫn cũ: (a) tôi bảo `android-35`/`build-tools;35.0.0`
+  nhưng `variables.gradle` yêu cầu **36**; (b) tôi bảo `sudo apt install openjdk-21-jdk` — thừa, vì JDK 21 đã
+  có sẵn; ngược lại vấn đề thật là `java` mặc định của máy là **25** mà Gradle 8.14.3 chưa hỗ trợ, nên phải
+  set `JAVA_HOME` về 21. Sau khi sửa: `./gradlew assembleDebug` **BUILD SUCCESSFUL in 3m38s** → APK 4.0MB.
+  Verify bằng `aapt2 dump badging` chứ không chỉ tin dòng "BUILD SUCCESSFUL": package `com.xnohat.webobsidian`,
+  minSdk 24 / targetSdk 36, quyền duy nhất là `INTERNET`, và `assets/capacitor.config.json` nhúng đúng
+  `server.url`. Chưa chạy emulator, chưa cài lên máy thật.
+  **Còn chặn**: M32.4 (smoke test với `https://obsidian.tuong.me` thật — domain không resolve từ máy này, `curl` exit 6),
+  M32.5 iOS (cần macOS + Xcode, không thể trên máy Linux này).
+- 2026-08-06 (M8.7 — Uninstall plugin gỡ hẳn, PRD 1.7): người dùng báo nhấn **Uninstall** thì plugin chỉ bị
+  disable chứ không bị xoá. Kiểm chứng bằng repro chạy server thật: server side **đúng** — thư mục bị xoá,
+  `enabled` và `installed` đều sạch. Root cause thật nằm ở 2 chỗ:
+  (1) **Bản deploy đang chạy không hề có route `DELETE`.** Image Docker được build 2026-08-04T10:07, trong khi
+  commit `1290a25` thêm route là 10:35 → `grep` trong `/app/server/dist/routes/plugins.js` của container chỉ
+  thấy get/post/patch/put. Request `DELETE` rơi vào Express 404 trả **HTML**, mà `req()` ở client chỉ đọc field
+  `error` trong JSON nên `ApiError.message` rỗng → UI hiện "Error: " trống, người dùng chỉ thấy plugin đã bị
+  disable. Lý do image không được rebuild: `npm run build` fail vì `@types/multer` kéo `@types/express` 5.x
+  trong khi server dùng 4.x (`src/routes/files.ts(128,3)` TS2769) — `tsc` exit 2 làm `RUN npm run build`
+  trong Dockerfile hỏng. Đã pin bằng `overrides` ở package.json gốc; `npm run typecheck` giờ **sạch cả 2
+  workspace** (trước đây lỗi này bị coi là "pre-existing" và bỏ qua).
+  (2) **Client gọi 2 request.** `Settings.tsx` disable trước rồi mới `DELETE`, nên bất kỳ lỗi nào của `DELETE`
+  cũng để lại đúng trạng thái "disabled nhưng vẫn cài". Guard `plugins.filter(...).length > 1` lại dựa vào
+  React state có thể cũ, còn `disablePlugin()` tự `window.location.reload()` khi server báo `reloadRequired`
+  → có thể reload trước khi `DELETE` kịp chạy. Nay thêm `uninstallPlugin()` trong `web/src/lib/plugins.ts`:
+  đúng 1 request, xoá khỏi `pluginStates`, và lỗi được ném ra để UI hiển thị.
+  Kiểm chứng: 3 test mới `web/src/lib/plugins.uninstall.test.ts` (khẳng định **không** có request `/enabled`)
+  + mở rộng `server/test/security.integration.test.ts` (xoá thư mục, sạch `enabled`+`installed`, traversal id
+  → 400). **Mutation-test** cả 2 hướng: bỏ route `DELETE` → test đỏ; sửa `uninstall()` thành chỉ clear
+  `enabled` → test đỏ. Server 3/3 pass, web 51 pass (1 fail localStorage có sẵn, cần `--localstorage-file`).
+  Đã `docker compose build` + `up -d`: container mới có `pluginsRouter.delete('/:id')`, và probe end-to-end
+  trên deployment thật (plugin fixture `uninstall-probe`) trả `DELETE -> 200`, thư mục biến mất, settings sạch.
+- 2026-08-06 (M8.5 + M8.6 — plugin parity cho `.base`, PRD 1.6): người dùng báo view của plugin thiếu so với
+  Obsidian (`TaskNotes/Views/calendar-default` render thành list 2 dòng thay vì lưới tuần). Root cause là 3 lỗ
+  hổng xếp lớp: (1) `metadataCache.getFileCache()` trả `null` cho mọi file trừ file đang mở và
+  `resolvedLinks`/`unresolvedLinks` không bao giờ được populate → plugin quét vault thấy rỗng **mà không có lỗi
+  nào**; (2) `registerBasesView` chỉ là registry ghi-rồi-quên, không ai đọc; (3) `BaseView.tsx` lấy dữ liệu bằng
+  `api.search('tag:…')` nên bỏ hết `filters`/`formulas`/`sort`/`options` của file `.base`.
+  **Sửa:** (a) `server/src/services/metacache.ts` parse cả vault (position thật, bỏ code fence) + route
+  `GET /api/search/metacache`, watcher cập nhật tăng dần; web prime cache **trước** khi load plugin.
+  (b) `web/src/lib/basesExpr.ts` — evaluator thật (tokenizer + Pratt parser) thay vì regex, gồm
+  `file.hasTag/hasLink/hasProperty/asLink`, `isType`, list pipeline, số học ngày + format moment.
+  (c) `web/src/lib/basesRuntime.ts` — dựng `BasesEntry`/`config`/`groupedData`/`ctx.formulas` theo đúng hợp
+  đồng Bases thật (inject lên view instance rồi gọi `onDataUpdated()`; **không** có `runQuery`/`getViewConfig`).
+  (d) `web/src/components/BasesPluginView.tsx` host renderer của plugin, giữ nguyên view instance giữa các lần
+  data đổi; danh sách phẳng chỉ còn là fallback (kèm cảnh báo khi renderer plugin ném lỗi).
+  **Kèm sửa `vault.trash()`**: `delete()` và `trash()` dùng chung một request nên ngữ nghĩa do
+  `settings.vault.deleteMode` quyết định thay vì theo hợp đồng API → nay pin `?mode=trash|permanent`.
+  **Kiểm chứng:** 48 test pass (24 test mới cho evaluator + runtime, 6 cho host). Quan trọng nhất là test
+  chạy **bundle TaskNotes 4.11.1 thật** trong vault với `calendar-default.base` thật: assert lưới FullCalendar
+  `timeGridWeek` render đủ 7 cột ngày + trục giờ và task `Standup` được đặt thành event — tức đúng thứ ảnh
+  chụp Obsidian desktop cho thấy. `npx tsc --noEmit -p web` sạch. Còn 1 test fail
+  (`plugins.compat.test.ts` localStorage) và 1 lỗi typecheck server (`files.ts(128,3)` overload multer/express)
+  — đã xác minh **cả hai có sẵn trên cây chưa sửa** (`git stash`), không do thay đổi này.
+  **Chưa làm:** `registerEditorExtension`/`registerEditorSuggest` vẫn no-op, và các event
+  `editor-change`/`layout-change`/`file-menu`/`editor-menu`/`quit`/`resize` chưa được fire.
 - 2026-06-27 (security fix — leo thang quyền qua token share): `verifyToken()` (server/src/services/auth.ts)
   chỉ kiểm tra chữ ký nên **mọi** token ký bằng `auth.jwtSecret` đều được chấp nhận như phiên owner. Endpoint
   public `POST /public/shares/:id/unlock` ký unlock-cookie bằng cùng secret → người được chia sẻ (có mật khẩu

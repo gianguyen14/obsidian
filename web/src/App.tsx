@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { api, ApiError } from './lib/api';
-import { useStore } from './lib/store';
+import { useStore, WORKSPACE_ID } from './lib/store';
 import Login from './components/Login';
 import Ribbon from './components/Ribbon';
 import Sidebar from './components/Sidebar';
@@ -89,8 +89,8 @@ export default function App() {
           // coalesce bursts of fs events into a single tree refresh
           window.clearTimeout(treeTimer);
           treeTimer = window.setTimeout(() => loadTree(), 800);
-        } else if (msg.type === 'uistate') {
-          // another tab/device changed the workspace → sync live
+        } else if (msg.type === 'uistate' && msg.workspaceId === WORKSPACE_ID) {
+          // Only another tab in this browser/app profile may sync workspace UI.
           useStore.getState().applyRemoteState(msg.state, msg.originId);
         }
       } catch {

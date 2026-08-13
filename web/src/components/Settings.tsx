@@ -13,6 +13,7 @@ import {
   getPluginRuntimeSnapshot,
   reloadPlugin,
   subscribePluginRuntime,
+  uninstallPlugin,
   type PluginSettingContribution,
 } from '../lib/plugins';
 
@@ -491,17 +492,19 @@ function Plugins({ onOpenSettings }: { onOpenSettings: (pluginId: string) => voi
     if (!confirm(`Uninstall "${plugin.name}"? Plugin settings stored in its folder will also be removed.`)) return;
     setMsg(`Uninstalling ${plugin.name}…`);
     try {
-      // Disabling the final active plugin reloads immediately to tighten CSP,
-      // so the atomic uninstall endpoint handles that case first.
-      if (plugin.enabled && plugins.filter((item) => item.enabled).length > 1) {
-        await disablePlugin(plugin.id);
+      // One atomic server call: it removes the plugin from `enabled` and
+      // `installed` and deletes the folder. Disabling first would leave the
+      // plugin disabled-but-installed if the uninstall call then failed.
+      const reloading = await uninstallPlugin(plugin.id);
+      if (reloading) {
+        setMsg('Reloading to apply plugin security policy…');
+        return;
       }
-      const result = await api.uninstallPlugin(plugin.id);
-      if (result.reloadRequired) { location.reload(); return; }
       await load();
       setMsg(`${plugin.name} uninstalled`);
     } catch (error: any) {
-      setMsg(`Error: ${error.message}`);
+      await load();
+      setMsg(`Error: could not uninstall ${plugin.name} — ${error.message || 'request failed'}`);
     }
   };
   const filtered = plugins.filter((plugin) => {
