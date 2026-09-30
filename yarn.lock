@@ -2036,11 +2036,11 @@
   resolved "https://registry.npmjs.org/@webgpu/types/-/types-0.1.71.tgz"
   integrity sha512-mMy8/ODcKhab808co15eW+yN+HgXoQxRQHTiBV9Mrvl1r0ufnid7YOcI+gi4eUWSWl9ezD6TW2KXccrL8HCh2A==
 
-"@webobsidian/desktop@file:/home/tuong/docker/webobsidian/desktop":
+"@webobsidian/desktop@file:/workspace/desktop":
   version "0.3.0"
   resolved "file:desktop"
 
-"@webobsidian/server@file:/home/tuong/docker/webobsidian/server":
+"@webobsidian/server@file:/workspace/server":
   version "0.1.0"
   resolved "file:server"
   dependencies:
@@ -2066,7 +2066,7 @@
     yaml "^2.9.0"
     zod "^3.23.8"
 
-"@webobsidian/web@file:/home/tuong/docker/webobsidian/web":
+"@webobsidian/web@file:/workspace/web":
   version "0.1.0"
   resolved "file:web"
   dependencies:
